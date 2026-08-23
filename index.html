@@ -528,7 +528,9 @@ let netPathFrom = null;       // 路径起点 id
 let netPathNodes = new Set(); // 高亮的路径节点
 let netPathLinks = new Set(); // 高亮的路径边（"a|b" 排序键）
 let draftEventPhotos = [];    // 面板「记一笔」表单里待附的照片（photo id）
-let qaDraftPhotos = [];       // 快速记一笔里待附的照片（photo id）
+let qaDraftPhotos = [];      // 快速记一笔里待附的照片（photo id）
+let _mentionCache = null, _mentionCacheSig = null;   // mentionGraph 结果缓存（state 变更时失效）
+let aiSendAck = false;   // 本次会话内是否已确认过「往来内容将发送给 AI」
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -822,6 +824,8 @@ function doExport(){
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(a.href);
   showToast('已导出加密备份（用当前应用锁密码还原）');
+  // 醒目提示：备份密码 = 当前应用锁，遗忘则永久无法还原
+  setTimeout(()=> showToast('⚠ 备份密码即当前应用锁密码，遗忘将无法还原，请记牢'), 1600);
 }
 
 async function loadState(){
@@ -857,6 +861,7 @@ async function loadState(){
   render();
 }
 async function saveState(){
+  _mentionCache = null;   // 数据即将变化，失效关系图缓存
   if(!unlocked){ showToast('已锁定，请先解锁'); return; }
   const ok = await store.set(DATA_KEY, JSON.stringify(encryptObj({ people: state.people, events: state.events, connections: state.connections }, sessionKey)));
   if(ok){
@@ -866,7 +871,7 @@ async function saveState(){
   else showToast('保存失败，请重试');
 }
 // 标记面板内有未写库的改动（二次确认：只有点「确认保存」才真正落库）
-function markDirty(){ panelDirty = true; const b=document.getElementById('saveBar'); if(b) b.style.display='flex'; }
+function markDirty(){ _mentionCache = null; panelDirty = true; const b=document.getElementById('saveBar'); if(b) b.style.display='flex'; }
 function showToast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -1209,6 +1214,9 @@ function relationStrength(aId, bId){
 // mutual: 无向对 "a|b" —— 同记(一笔里 @多人,两两互认) + 双向互@(A@B 且 B@A)
 // directed: from -> Set(to) —— 单方 @（A 的往来 @B 但 B 没 @A）
 function mentionGraph(){
+  // 缓存：state.people/events 数量 + connections 数量组成的指纹；任一变化即失效
+  const _sig = (state.people.length) + '|' + (state.events.length) + '|' + ((state.connections||[]).length);
+  if(_mentionCache && _mentionCacheSig===_sig) return _mentionCache;
   const mutual = new Set();
   const directed = new Map();
   const pk = (a,b)=> [a,b].sort().join('|');
@@ -1239,7 +1247,9 @@ function mentionGraph(){
   });
   // 双向互@ → 也算互相认识
   directed.forEach((tos, from)=> tos.forEach(to=>{ if(directed.has(to) && directed.get(to).has(from)) mutual.add(pk(from,to)); }));
-  return { mutual, directed, pk };
+  _mentionCache = { mutual, directed, pk };
+  _mentionCacheSig = _sig;
+  return _mentionCache;
 }
 // 两人是否「互相认识」：手动连线 或 提及互认（同记 / 双向互@）
 function isKnown(a,b){
@@ -1328,7 +1338,16 @@ function renderTagCloud(){
 function renderStaleContacts(){
   const el = document.getElementById('staleScroll');
   if(!el) return;
-  if(state.people.length===0){ el.innerHTML = `<div class="empty-hint">还没有人</div>`; return; }
+  if(state.people.length===0){
+    el.innerHTML = `<div class="empty-hint" style="padding:18px 4px; line-height:1.7;">
+      <b style="color:var(--jade-light);">开始记录你的关系网：</b><br/>
+      ① 点右下角 <b>「记一笔」</b>，内容里 <b>@谁</b> 就自动归到谁名下；<br/>
+      ② 或点底部 <b>「+」</b> 手动加一个人；<br/>
+      ③ 在某人档案里记的往来里 <b>@其他人</b>，会自动加进「认识的人」。<br/>
+      <span style="opacity:0.6;">数据全程加密存在本机，换机用「设置 → 导出备份」即可带走。</span>
+    </div>`;
+    return;
+  }
   // K. 该主动联系：优先按「下次联系目标日」 overdue / 临近 排序；没设目标日的按「多久没联系」兜底
   const list = state.people.map(p=>{
     const evs = state.events.filter(e=>e.personId===p.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -2240,6 +2259,16 @@ function renderPanel(){
       p.aiSummary = { text: localSummary(p, evs), updatedAt: Date.now(), offline:true };
       markDirty(); renderPanel(); showToast('未配置 Key，已用本地整理'); return;
     }
+    // 隐私确认：往来内容（含 @姓名、备注）将发送给 AI 服务
+    if(!aiSendAck){
+      const ok = await new Promise(res=>{
+        showConfirm('发送给 AI', '即将把「'+ (p.name||'这位') +'」的姓名、身份、标签、备注与往来记录（含其中 @ 的姓名）发送给 AI 服务以生成总结。\n\n确定继续？', ()=>res(true));
+        const cb = document.getElementById('confirmCancel');
+        if(cb) cb.onclick = ()=>{ document.getElementById('confirmOverlay').classList.remove('show'); res(false); };
+      });
+      if(!ok){ return; }
+      aiSendAck = true;   // 本次会话内不再重复询问
+    }
     btn.disabled = true; btn.textContent = '生成中…';
     try{
       const timelineText = evs.slice(0,20).map(e=>`[${e.date}] ${eventTypes(e).join('、')}: ${e.content}`).join('\n') || '（暂无记录）';
@@ -2469,6 +2498,7 @@ function renderSettingsPanel(){
     <button class="save-row-btn" id="exportBtn">导出备份（JSON）</button>
     <button class="save-row-btn" id="importBtn" style="margin-top:8px;">导入备份…</button>
     <input type="file" id="importFile" accept="application/json,.json" style="display:none;" />
+    <div class="empty-hint" style="padding:6px 2px 10px; line-height:1.5;">备份用「当前应用锁密码」加密，跨设备还原需相同密码；<b>遗忘应用锁密码则备份永久无法打开</b>，请务必记牢 PIN。</div>
     <button class="danger-btn" id="clearAllBtn">清空所有数据</button>
 
     <div class="section-label">标签管理（统一命名，避免 香港 / HK 重复）</div>
@@ -2508,10 +2538,16 @@ function renderSettingsPanel(){
         // 兼容两种格式：新版 {state, settings} 或旧版直接 {people,events,connections}
         const incomingState = data.state || data;
         if(!data || !Array.isArray(incomingState.people)) throw new Error('格式不对');
-        // 若有设置，一并还原（绑定到新设备/浏览器）
-        if(data.settings){ saveSettings(data.settings); }
-        const merge = state.people.length>0 && confirm('当前已有数据。确定「替换」全部数据，还是「取消」后追加（自动去重）？\n（点确定=替换，点取消=追加）');
-        if(merge){
+        // 当前已有数据时，让用户明确选择「替换全部」还是「追加去重」（自定义确认，避免误覆盖整库）
+        let replaceAll = (state.people.length===0);   // 无数据则直接采用导入内容
+        if(state.people.length>0){
+          replaceAll = await new Promise(res=>{
+            showConfirm('导入方式', '当前已有数据。\n\n• 确定 = 替换全部（导入文件覆盖现有数据，不可撤销）\n• 取消 = 追加（自动按姓名/ID 去重合并）', ()=>res(true));
+            const cancelBtn = document.getElementById('confirmCancel');
+            if(cancelBtn) cancelBtn.onclick = ()=>{ document.getElementById('confirmOverlay').classList.remove('show'); res(false); };
+          });
+        }
+        if(replaceAll){
           state = { people: incomingState.people||[], events: incomingState.events||[], connections: incomingState.connections||[] };
         } else {
           const norm = s=>(s||'').trim().toLowerCase();
@@ -2531,9 +2567,10 @@ function renderSettingsPanel(){
         // 还原照片库（替换=直接用导入的；追加=合并去重）
         let incomingPhotos = (data.photos && typeof data.photos==='object') ? data.photos
                           : (data.photos ? (()=>{ try{ return JSON.parse(data.photos); }catch(e){ return {}; } })() : {});
-        if(merge){ photoCache = Object.assign({}, incomingPhotos); }
+        if(replaceAll){ photoCache = Object.assign({}, incomingPhotos); }
         else { const base = await loadPhotoMap(); photoCache = Object.assign({}, base, incomingPhotos); }
         await savePhotoMap(photoCache);
+        try{ migrateMentionToConnections(); }catch(_){}   // 导入后把互认边沉淀进 connections
         await saveState(); render();
         document.getElementById('settingsOverlay').classList.remove('show');
       }catch(e){
