@@ -2269,7 +2269,7 @@ function openQuickAdd(){
   panel.innerHTML = `
     <div class="panel-handle"></div>
     <div class="panel-head"><h2>记一笔</h2><button class="icon-btn" id="qaClose">✕</button></div>
-    <p class="qa-hint">打 @ 选库里的人，这笔会自动归到 Ta 名下；也可在下面手动选人。</p>
+    <p class="qa-hint">打 @ 选库里的人，这笔会自动归到<b>每个人</b>名下（支持多人）；也可在下面手动加归属。</p>
     <div class="add-event-form">
       <div class="type-picker" id="qaType">${EVENT_TYPES.map(t=>`<button class="type-chip ${t.k==='见面'?'active':''}" data-type="${t.k}">${t.i} ${t.k}</button>`).join('')}</div>
       <div class="qa-owner" id="qaOwner"></div>
@@ -2302,9 +2302,14 @@ function openQuickAdd(){
   const ownerLine = document.getElementById('qaOwner');
   const detectOwner = ()=>{
     const txt = document.getElementById('qa-content').value;
-    const hit = state.people.find(p=> p.name && txt.includes('@'+p.name));
-    if(hit){ ownerSel.value = hit.id; ownerLine.innerHTML = '归属：<b>'+escapeHtml(hit.name)+'</b>（由 @ 自动识别，可改）'; }
-    else { ownerLine.innerHTML = ownerSel.value ? '归属：<b>'+escapeHtml((personById(ownerSel.value)||{}).name||'')+'</b>' : '未选归属人'; }
+    const hits = [...new Set(state.people.filter(p=> p.name && txt.includes('@'+p.name)).map(p=>p.id))];
+    if(hits.length){
+      ownerSel.value = hits[0];
+      const names = hits.map(id=>(personById(id)||{}).name||'').filter(Boolean);
+      ownerLine.innerHTML = '归属：<b>'+escapeHtml(names.join('、'))+'</b>（@ 自动识别，'+hits.length+'人，可改）';
+    } else {
+      ownerLine.innerHTML = ownerSel.value ? '归属：<b>'+escapeHtml((personById(ownerSel.value)||{}).name||'')+'</b>' : '未选归属人';
+    }
   };
   document.getElementById('qa-content').addEventListener('input', detectOwner);
   ownerSel.addEventListener('change', detectOwner);
@@ -2328,15 +2333,21 @@ function openQuickAdd(){
   document.getElementById('qaSave').onclick = async ()=>{
     const content = document.getElementById('qa-content').value.trim();
     if(!content){ showToast('写点内容吧'); return; }
-    const ownerId = ownerSel.value;
-    if(!ownerId){ showToast('先 @ 一个人，或在下拉里选归属'); return; }
+    // 归属：手动选的 owner + 内容里 @ 的所有库内的人，去重（支持多人）
+    const owners = new Set();
+    if(ownerSel.value) owners.add(ownerSel.value);
+    state.people.forEach(p=>{ if(p.name && content.includes('@'+p.name)) owners.add(p.id); });
+    if(owners.size===0){ showToast('先 @ 一个人，或在下拉里选归属'); return; }
     const date = document.getElementById('qa-date').value || new Date().toISOString().slice(0,10);
-    state.events.push({ id: uid(), personId: ownerId, type: qaEventType, date, content, photos: qaDraftPhotos.slice() });
+    const photos = qaDraftPhotos.slice();
+    [...owners].forEach(id=>{
+      state.events.push({ id: uid(), personId: id, type: qaEventType, date, content, photos: photos.slice() });
+    });
     qaDraftPhotos = [];
     await saveState();
     ov.classList.remove('show');
     render();
-    showToast('已记到 '+(personById(ownerId).name||'')+' 名下');
+    showToast('已记到 '+owners.size+' 人名下');
   };
 }
 
