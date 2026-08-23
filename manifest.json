@@ -1,0 +1,19 @@
+{
+  "name": "六度分隔 · 人脉簿",
+  "short_name": "六度分隔",
+  "description": "本地加密的人脉关系管理：记录往来、关系网、AI 总结。数据仅存本机。",
+  "lang": "zh-CN",
+  "start_url": "/shirenbo/index.html",
+  "scope": "/shirenbo/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#141F1D",
+  "theme_color": "#141F1D",
+  "icons": [
+    { "src": "icons/icon-96.png",  "sizes": "96x96",      "type": "image/png" },
+    { "src": "icons/icon-144.png", "sizes": "144x144",    "type": "image/png" },
+    { "src": "icons/icon-192.png", "sizes": "192x192",    "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512",    "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
