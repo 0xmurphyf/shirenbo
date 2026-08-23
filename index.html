@@ -235,6 +235,7 @@
   .net-canvas-wrap svg:active{cursor:grabbing;}
   .net-link-intro{stroke:rgba(217,184,118,0.45); stroke-width:1.6;}
   .net-link-know{stroke:rgba(123,175,156,0.5); stroke-width:1.4; stroke-dasharray:4 3;}
+  .net-link-mention{stroke:rgba(217,184,118,0.4); stroke-width:1.3; stroke-dasharray:2 4;}
   .net-node-circle{stroke-width:2; cursor:pointer;}
   .net-node-label{font-family:'Noto Sans SC',sans-serif; font-size:10.5px; fill:var(--paper); pointer-events:none; text-anchor:middle;}
   .net-node-initial{font-family:'Noto Serif SC',serif; font-weight:700; font-size:12px; pointer-events:none; text-anchor:middle; dominant-baseline:central;}
@@ -1154,16 +1155,20 @@ async function restoreBackup(ts){
 
 // ---- 关系网洞察：A、B 互不认识但都认识 C → C 可介绍 ----
 function listAllBridges(){
+  const mg = mentionGraph();   // 复用一次，避免重复计算
   const pairKey2 = (a,b)=> [a,b].sort().join('|');
   const links = new Set();
   state.people.forEach(p=>{ if(p.introducedBy) links.add(pairKey2(p.introducedBy, p.id)); });
   (state.connections||[]).forEach(c=> links.add(pairKey2(c.a, c.b)));
+  mg.mutual.forEach(pr=> links.add(pr));   // 提及互认也算已知连线
   const neighbors = (id)=>{
     const s = new Set();
     state.people.forEach(p=>{ if(p.introducedBy===id) s.add(p.id); });
     const me = personById(id);
     if(me && me.introducedBy) s.add(me.introducedBy);
     (state.connections||[]).forEach(c=>{ if(c.a===id) s.add(c.b); if(c.b===id) s.add(c.a); });
+    mg.mutual.forEach(pr=>{ const [x,y]=pr.split('|'); if(x===id) s.add(y); if(y===id) s.add(x); });
+    mg.directed.forEach((tos,from)=>{ if(from===id) tos.forEach(t=>s.add(t)); if(tos.has(id)) s.add(from); });
     return s;
   };
   const out = [];
@@ -1196,6 +1201,48 @@ function relationStrength(aId, bId){
   return 1.3 + Math.min(n, 6) * 0.7;
 }
 
+// 从往来内容推断「提及认识」（动态计算，不存储，保持单一数据源）
+// mutual: 无向对 "a|b" —— 同记(一笔里 @多人,两两互认) + 双向互@(A@B 且 B@A)
+// directed: from -> Set(to) —— 单方 @（A 的往来 @B 但 B 没 @A）
+function mentionGraph(){
+  const mutual = new Set();
+  const directed = new Map();
+  const pk = (a,b)=> [a,b].sort().join('|');
+  // 同记：一笔 event 内容里 @了 >=2 个不同的人（排除记录者本人）→ 这些人 + 记录者 两两互认
+  state.events.forEach(e=>{
+    if(!e.content) return;
+    const others = [...new Set(state.people.filter(p=> p.id!==e.personId && p.name && e.content.includes('@'+p.name)).map(p=>p.id))];
+    if(others.length>=2){
+      const ids = new Set(others);
+      if(e.personId) ids.add(e.personId);   // 记录者本人也是该笔往来的参与者
+      const arr = [...ids];
+      for(let i=0;i<arr.length;i++) for(let j=i+1;j<arr.length;j++){
+        if(arr[i]!==arr[j]) mutual.add(pk(arr[i],arr[j]));
+      }
+    }
+    // 仅 @1 人的情况 → 由下方 directed 处理为「单方认识」，不互认
+  });
+  // 单方/双向 @：event.personId 的往来里 @了内容中的人
+  state.events.forEach(e=>{
+    const from = e.personId;
+    if(!from || !e.content) return;
+    state.people.forEach(p=>{
+      if(p.id!==from && p.name && e.content.includes('@'+p.name)){
+        if(!directed.has(from)) directed.set(from, new Set());
+        directed.get(from).add(p.id);
+      }
+    });
+  });
+  // 双向互@ → 也算互相认识
+  directed.forEach((tos, from)=> tos.forEach(to=>{ if(directed.has(to) && directed.get(to).has(from)) mutual.add(pk(from,to)); }));
+  return { mutual, directed, pk };
+}
+// 两人是否「互相认识」：手动连线 或 提及互认（同记 / 双向互@）
+function isKnown(a,b){
+  if(findConnection(a,b)) return true;
+  return mentionGraph().mutual.has([a,b].sort().join('|'));
+}
+
 // L. 解释「两人为什么连在一起」：介绍关系 / 互相认识 / 往来里 @ 过彼此
 function reasonBetween(aId, bId){
   const a = personById(aId), b = personById(bId);
@@ -1207,13 +1254,21 @@ function reasonBetween(aId, bId){
   else if(a.introducedBy===bId) parts.push(`<b>${escapeHtml(bName)}</b> 把 <b>${escapeHtml(aName)}</b> 介绍给你认识`);
   // 2) 互相认识（手动添加）
   if(findConnection(aId, bId)) parts.push(`两人互相认识（你在「认识的人」里手动连过）`);
-  // 3) 往来里 @ 过彼此
-  const cross = [];
-  state.events.forEach(e=>{
-    if(e.personId===aId && bName && e.content && e.content.includes('@'+bName)) cross.push(e.date);
-    if(e.personId===bId && aName && e.content && e.content.includes('@'+aName)) cross.push(e.date);
-  });
-  if(cross.length) parts.push(`在 ${cross.length} 笔往来里 @ 过彼此（最早 ${escapeHtml(cross.sort()[0])}）`);
+  // 3) 往来提及（同记 / 单方 / 双方），由 mentionGraph 推断
+  const { mutual, directed, pk } = mentionGraph();
+  const mkey = pk(aId, bId);
+  if(mutual.has(mkey)){
+    const co = state.events.filter(e=> e.content && e.content.includes('@'+aName) && e.content.includes('@'+bName));
+    if(co.length) parts.push(`在 ${co.length} 笔往来里被一起 @（同一场合认识，互相认识）`);
+    else parts.push(`两人都在往来里 @过彼此（双向提及，互相认识）`);
+  } else {
+    const aToB = directed.has(aId) && directed.get(aId).has(bId);
+    const bToA = directed.has(bId) && directed.get(bId).has(aId);
+    if(aToB || bToA){
+      const who = aToB ? `<b>${escapeHtml(aName)}</b> 单方面 @过 <b>${escapeHtml(bName)}</b>` : `<b>${escapeHtml(bName)}</b> 单方面 @过 <b>${escapeHtml(aName)}</b>`;
+      parts.push(`${who}（单方提及，算单方认识）`);
+    }
+  }
   // 4) 共同标签
   const shared = (a.tags||[]).filter(t=> (b.tags||[]).includes(t));
   if(shared.length) parts.push(`共同标签：${shared.map(t=>'#'+escapeHtml(t)).join('、')}`);
@@ -2558,6 +2613,8 @@ function buildGraph(){
   state.people.forEach(p=> adj.set(p.id, []));
   state.people.forEach(p=>{ if(p.introducedBy && adj.has(p.introducedBy)){ adj.get(p.id).push(p.introducedBy); adj.get(p.introducedBy).push(p.id); } });
   (state.connections||[]).forEach(c=>{ if(adj.has(c.a)&&adj.has(c.b)){ adj.get(c.a).push(c.b); adj.get(c.b).push(c.a); } });
+  // 提及互认（同记/双向互@）也连边，用于最短路径
+  mentionGraph().mutual.forEach(pr=>{ const [x,y]=pr.split('|'); if(adj.has(x)&&adj.has(y)){ adj.get(x).push(y); adj.get(y).push(x); } });
   return adj;
 }
 function shortestPath(aId, bId){
@@ -2608,6 +2665,7 @@ function renderNetworkPanel(){
     <div class="net-legend" style="padding-top:0;">
       <span><i style="background:var(--brass-light); border-radius:0; width:16px; height:2px;"></i>介绍关系</span>
       <span><i style="background:var(--jade-light); border-radius:0; width:16px; height:2px; opacity:0.7;"></i>互相认识</span>
+      <span><i style="background:rgba(217,184,118,0.6); border-radius:0; width:16px; height:2px; opacity:0.7;"></i>提及认识(点线)</span>
     </div>
     <div class="net-detail" id="netDetail"></div>
     <div class="net-insight" id="netInsight"></div>
@@ -2641,7 +2699,8 @@ function renderNetworkPanel(){
     const introLinks = state.people.filter(p=> p.introducedBy && nodeIds.has(p.introducedBy)).map(p=>({ source:p.introducedBy, target:p.id, kind:'intro' }));
     const introPairs = new Set(introLinks.map(l=>pairKey(l.source,l.target)));
     const knowLinks = (state.connections||[]).filter(c=> nodeIds.has(c.a)&&nodeIds.has(c.b)&&!introPairs.has(pairKey(c.a,c.b))).map(c=>({ source:c.a, target:c.b, kind:'know' }));
-    links = [...introLinks, ...knowLinks];
+    const mentionLinks = [...mentionGraph().mutual].filter(pr=>{ const [x,y]=pr.split('|'); return nodeIds.has(x)&&nodeIds.has(y)&&!introPairs.has(pr); }).map(pr=>{ const [x,y]=pr.split('|'); return { source:x, target:y, kind:'mention' }; });
+    links = [...introLinks, ...knowLinks, ...mentionLinks];
   } else {
     // ego network：中心 + 直接相邻（介绍 / 互相认识）
     const neigh = new Set();
@@ -2649,8 +2708,11 @@ function renderNetworkPanel(){
     state.people.forEach(p=>{ if(p.introducedBy===netCenterId) neigh.add(p.id); });
     // 介绍中心的人（反向介绍关系，同样算相邻，否则中心会“孤立”）
     if(centerPerson && centerPerson.introducedBy) neigh.add(centerPerson.introducedBy);
-    // 互相认识
+    // 互相认识（手动 + 提及互认）
     (state.connections||[]).forEach(c=>{ if(c.a===netCenterId) neigh.add(c.b); if(c.b===netCenterId) neigh.add(c.a); });
+    const mg = mentionGraph();
+    mg.mutual.forEach(pr=>{ const [x,y]=pr.split('|'); if(x===netCenterId) neigh.add(y); if(y===netCenterId) neigh.add(x); });
+    mg.directed.forEach((tos,from)=>{ if(from===netCenterId) tos.forEach(t=>neigh.add(t)); if(tos.has(netCenterId)) neigh.add(from); });
     const egoIds = [netCenterId, ...neigh];
     nodes = egoIds.map(id=>{ const pp=personById(id); return { id, name:(pp&&pp.name)||'未命名', score:computeScore(pp||centerPerson), isCenter: id===netCenterId }; });
     links = [...neigh].map(nid=>{
@@ -2664,7 +2726,7 @@ function renderNetworkPanel(){
   svg.call(d3.zoom().scaleExtent([0.4, 3]).on('zoom', (event)=>{ g.attr('transform', event.transform); }));
 
   const linkSel = g.append('g').selectAll('line').data(links).join('line')
-    .attr('class', d=> d.kind==='intro' ? 'net-link net-link-intro' : 'net-link net-link-know')
+    .attr('class', d=> d.kind==='intro' ? 'net-link net-link-intro' : (d.kind==='mention' ? 'net-link net-link-mention' : 'net-link net-link-know'))
     .attr('stroke-width', d=> relationStrength(typeof d.source==='object'?d.source.id:d.source, typeof d.target==='object'?d.target.id:d.target));
 
   // L. 点连线：解释两人为什么连在一起
