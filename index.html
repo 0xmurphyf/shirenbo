@@ -2617,8 +2617,7 @@ function buildGraph(){
   state.people.forEach(p=> adj.set(p.id, []));
   state.people.forEach(p=>{ if(p.introducedBy && adj.has(p.introducedBy)){ adj.get(p.id).push(p.introducedBy); adj.get(p.introducedBy).push(p.id); } });
   (state.connections||[]).forEach(c=>{ if(adj.has(c.a)&&adj.has(c.b)){ adj.get(c.a).push(c.b); adj.get(c.b).push(c.a); } });
-  // 提及互认（同记/双向互@）也连边，用于最短路径
-  mentionGraph().mutual.forEach(pr=>{ const [x,y]=pr.split('|'); if(adj.has(x)&&adj.has(y)){ adj.get(x).push(y); adj.get(y).push(x); } });
+  // 注意：互认边已由上方 connections 承载（含迁移/保存时沉淀的提及互认），无需再重复加 mentionGraph().mutual
   return adj;
 }
 function shortestPath(aId, bId){
@@ -2702,8 +2701,12 @@ function renderNetworkPanel(){
     nodes = state.people.map(p=>({ id:p.id, name:p.name||'未命名', score:computeScore(p), isCenter:false }));
     const introLinks = state.people.filter(p=> p.introducedBy && nodeIds.has(p.introducedBy)).map(p=>({ source:p.introducedBy, target:p.id, kind:'intro' }));
     const introPairs = new Set(introLinks.map(l=>pairKey(l.source,l.target)));
+    const connPairs = new Set((state.connections||[]).map(c=> pairKey(c.a,c.b)));
     const knowLinks = (state.connections||[]).filter(c=> nodeIds.has(c.a)&&nodeIds.has(c.b)&&!introPairs.has(pairKey(c.a,c.b))).map(c=>({ source:c.a, target:c.b, kind:'know' }));
-    const mentionLinks = [...mentionGraph().mutual].filter(pr=>{ const [x,y]=pr.split('|'); return nodeIds.has(x)&&nodeIds.has(y)&&!introPairs.has(pr); }).map(pr=>{ const [x,y]=pr.split('|'); return { source:x, target:y, kind:'mention' }; });
+    // 提及边只画「单方 @」的 directed 边（互认边已在 connections 里，避免重复绘制）
+    const mentionLinks = [...mentionGraph().directed.entries()].flatMap(([from,tos])=> [...tos]
+      .filter(to=> nodeIds.has(from)&&nodeIds.has(to) && !connPairs.has(pairKey(from,to)) && !introPairs.has(pairKey(from,to)))
+      .map(to=>({ source:from, target:to, kind:'mention' })));
     links = [...introLinks, ...knowLinks, ...mentionLinks];
   } else {
     // ego network：中心 + 直接相邻（介绍 / 互相认识）
@@ -2712,11 +2715,12 @@ function renderNetworkPanel(){
     state.people.forEach(p=>{ if(p.introducedBy===netCenterId) neigh.add(p.id); });
     // 介绍中心的人（反向介绍关系，同样算相邻，否则中心会“孤立”）
     if(centerPerson && centerPerson.introducedBy) neigh.add(centerPerson.introducedBy);
-    // 互相认识（手动 + 提及互认）
+    // 互相认识（来自 connections，已含提及互认边）
     (state.connections||[]).forEach(c=>{ if(c.a===netCenterId) neigh.add(c.b); if(c.b===netCenterId) neigh.add(c.a); });
+    // 单方 @ 的 directed 边（不在 connections 里，避免与上面重复）
+    const connPairsEgo = new Set((state.connections||[]).map(c=> pairKey(c.a,c.b)));
     const mg = mentionGraph();
-    mg.mutual.forEach(pr=>{ const [x,y]=pr.split('|'); if(x===netCenterId) neigh.add(y); if(y===netCenterId) neigh.add(x); });
-    mg.directed.forEach((tos,from)=>{ if(from===netCenterId) tos.forEach(t=>neigh.add(t)); if(tos.has(netCenterId)) neigh.add(from); });
+    mg.directed.forEach((tos,from)=>{ if(from===netCenterId) tos.forEach(t=>{ if(!connPairsEgo.has(pairKey(from,t))) neigh.add(t); }); if(tos.has(netCenterId)) neigh.add(from); });
     const egoIds = [netCenterId, ...neigh];
     nodes = egoIds.map(id=>{ const pp=personById(id); return { id, name:(pp&&pp.name)||'未命名', score:computeScore(pp||centerPerson), isCenter: id===netCenterId }; });
     links = [...neigh].map(nid=>{
