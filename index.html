@@ -253,9 +253,6 @@
   .add-chip-row input{flex:1; background:rgba(0,0,0,0.15); border:1px solid var(--shell-line); border-radius:8px; color:var(--paper); padding:7px 10px; font-size:12px;}
   .add-chip-row button{background:var(--shell-3); border:1px solid var(--shell-line); color:var(--paper); border-radius:8px; padding:0 12px; font-size:16px; cursor:pointer;}
   .chip-x{cursor:pointer; margin-left:4px; opacity:0.6;}
-  .chip-auto{border-style:dashed; border-color:rgba(123,175,156,0.5); color:var(--jade-light); display:inline-flex; align-items:center; gap:4px;}
-  .chip-tag{font-size:9px; padding:1px 5px; border-radius:6px; background:rgba(123,175,156,0.18); color:var(--jade-light); opacity:0.8;}
-  .knows-auto-label{font-size:11px; color:rgba(123,175,156,0.7); margin:8px 0 4px;}
 
   @media (max-width:380px){ .field-grid{grid-template-columns:1fr;} }
 
@@ -838,7 +835,7 @@ async function loadState(){
   if(!state.events) state.events = [];
   if(!state.connections) state.connections = [];
   state.people.forEach(p=>{
-    if(!p.roles) p.roles = p.relation ? [p.relation] : ['朋友'];
+    if(!p.roles) p.roles = p.relation ? [p.relation] : [];   // 不默认「朋友」
     if(!p.tags) p.tags = [];
     if(!p.contacts) p.contacts = p.phone ? [{type:'电话/微信', value:p.phone}] : [];
     if(!p.socials) p.socials = [];
@@ -853,6 +850,7 @@ async function loadState(){
     if(p.photo===undefined) p.photo = null;   // 头像（photo id）
   });
   state.events.forEach(e=>{ if(!e.photos) e.photos = []; });   // 往来里的场景照片（photo id 数组）
+  try{ migrateMentionToConnections(); }catch(_){}   // 沉淀历史「互认」边进 connections（幂等）
   photoCache = null; await loadPhotoMap();   // 载入照片库缓存，供后续同步读取
   render();
 }
@@ -1299,6 +1297,16 @@ function deleteTag(t){
   const reAt = new RegExp('@'+esc,'g'), reHash = new RegExp('#'+esc,'g');
   state.people.forEach(p=>{ p.tags = (p.tags||[]).filter(x=> x!==t); if(p.notes) p.notes = p.notes.replace(reAt,'').replace(reHash,''); });
   state.events.forEach(e=>{ if(e.content) e.content = e.content.replace(reAt,'').replace(reHash,''); });
+}
+
+// 保存往来时：把内容里 @ 的其他人加进「认识的人」（与手动连线完全一致，可删、持久化）
+function addMentionConnections(ownerId, content){
+  if(!content) return;
+  state.people.forEach(p=>{ if(p.id!==ownerId && p.name && content.includes('@'+p.name)) addConnection(ownerId, p.id); });
+}
+// 迁移：把历史往来推断出的「互认」边（同记/双向互@）一次性沉淀进 connections，使旧数据也出现在「认识的人」
+function migrateMentionToConnections(){
+  mentionGraph().mutual.forEach(pr=>{ const [x,y]=pr.split('|'); addConnection(x,y); });
 }
 
 // ---- 首页标签云：点标签即按标签筛选 ----
@@ -2150,17 +2158,9 @@ function renderPanel(){
 
   function renderKnowsEdit(){
     const conns = connectionsOf(p.id);
-    // 提及互认：从往来推断，与该人相关的 mutual 边（自动识别，不可手动删）
-    const mg = mentionGraph();
-    const auto = [...mg.mutual].map(pr=>{ const [x,y]=pr.split('|'); return x===p.id? y : (y===p.id? x : null); }).filter(Boolean)
-      .map(id=> personById(id)).filter(Boolean);
-    const manualHtml = conns.length
+    document.getElementById('knowsEdit').innerHTML = conns.length
       ? conns.map(c=>`<span class="chip">${escapeHtml(c.other.name||'未命名')}<span class="chip-x" data-cid="${c.connId}">✕</span></span>`).join('')
       : `<span style="font-size:12px;color:rgba(241,232,214,0.3);">还没有添加</span>`;
-    const autoHtml = auto.length
-      ? `<div class="knows-auto-label">自动识别（往来提及互认）</div>` + auto.map(o=>`<span class="chip chip-auto">${escapeHtml(o.name||'未命名')}<span class="chip-tag">提及</span></span>`).join('')
-      : '';
-    document.getElementById('knowsEdit').innerHTML = manualHtml + autoHtml;
     document.querySelectorAll('#knowsEdit .chip-x').forEach(x=>{
       x.onclick = ()=>{ removeConnection(x.dataset.cid); markDirty(); renderKnowsEdit(); };
     });
@@ -2210,12 +2210,14 @@ function renderPanel(){
       const e = state.events.find(x=>x.id===editingEventId);
       if(e){ e.type = [...pendingEventTypes]; e.date = date; e.content = content; e.photos = draftEventPhotos.slice(); }
       applyTagsToOwners([p.id], content);   // 编辑时同步 #标签 到人物 tags
+      addMentionConnections(p.id, content);  // 编辑时把 @ 的人加进「认识的人」
       editingEventId = null;
       document.getElementById('saveEventBtn').textContent = '记这一笔';
       showToast('已更新');
     } else {
       state.events.push({ id: uid(), personId: p.id, type: [...pendingEventTypes], date, content, photos: draftEventPhotos.slice() });
       applyTagsToOwners([p.id], content);
+      addMentionConnections(p.id, content);  // 把 @ 的人加进「认识的人」
       showToast('记下了');
     }
     draftEventPhotos = [];
@@ -2430,6 +2432,7 @@ function openQuickAdd(){
     const photos = qaDraftPhotos.slice();
     [...owners].forEach(id=>{
       state.events.push({ id: uid(), personId: id, type: [...qaEventTypes], date, content, photos: photos.slice() });
+      addMentionConnections(id, content);   // 把 @ 的其他人加进各 owner 的「认识的人」
     });
     applyTagsToOwners([...owners], content);   // #标签 汇聚到各 owner 的 tags，标签云/筛选生效
     qaDraftPhotos = [];
