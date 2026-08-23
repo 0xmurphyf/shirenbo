@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>六度分隔</title>
+<title>人脉簿</title>
 <meta name="theme-color" content="#141F1D">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="六度分隔">
+<meta name="apple-mobile-web-app-title" content="人脉簿">
 <link rel="manifest" href="manifest.json">
 <!-- 字体：优先系统中文衬线/无衬线；离线也能用，不再依赖 Google Fonts CDN -->
 <style>
@@ -482,8 +482,8 @@
 <!-- 应用锁：启动/自动锁定后必须先解锁才能看到数据 -->
 <div class="overlay lock-screen" id="lockScreen">
   <div class="lock-box">
-    <div class="lock-seal">六</div>
-    <h2 id="lockTitle">六度分隔</h2>
+    <div class="lock-seal"><img src="icons/icon-192.png" alt="人脉簿" style="width:46px;height:46px;border-radius:8px;" /></div>
+    <h2 id="lockTitle">人脉簿</h2>
     <p class="lock-sub" id="lockSub">输入应用锁密码以查看你的人脉簿</p>
     <input id="lockPin" type="password" inputmode="numeric" autocomplete="off" placeholder="应用锁密码" />
     <div class="lock-err" id="lockErr"></div>
@@ -814,7 +814,7 @@ function doExport(){
   const blob = new Blob([JSON.stringify(env, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `六度分隔备份-${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `人脉簿备份-${new Date().toISOString().slice(0,10)}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(a.href);
   showToast('已导出加密备份（用当前应用锁密码还原）');
@@ -2817,11 +2817,11 @@ function showLockScreen(mode){
   err.textContent='';
   if(mode==='setup' || mode==='setup-confirm'){
     title.textContent = (mode==='setup') ? '设置应用锁' : '确认密码';
-    sub.textContent = (mode==='setup') ? '为你的六度分隔设置一道密码，数据将加密存于本机' : '再输入一次以确认';
+    sub.textContent = (mode==='setup') ? '为你的人脉簿设置一道密码，数据将加密存于本机' : '再输入一次以确认';
     submit.textContent = '创建';
     forgot.style.display='none';
   } else {
-    title.textContent = '六度分隔';
+    title.textContent = '人脉簿';
     sub.textContent = '输入应用锁密码以查看你的人脉簿';
     submit.textContent = '解锁';
     forgot.style.display='block';

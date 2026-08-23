@@ -1,6 +1,6 @@
 {
-  "name": "六度分隔 · 人脉簿",
-  "short_name": "六度分隔",
+  "name": "人脉簿",
+  "short_name": "人脉簿",
   "description": "本地加密的人脉关系管理：记录往来、关系网、AI 总结。数据仅存本机。",
   "lang": "zh-CN",
   "start_url": "/shirenbo/index.html",
