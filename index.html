@@ -503,6 +503,9 @@ const EVENT_TYPES = [
   {k:'引荐', i:'🤝'}, {k:'礼物', i:'🎁'}, {k:'金钱', i:'💰'}, {k:'饭局', i:'🍺'}, {k:'其他', i:'📌'}
 ];
 const TYPE_ICON = Object.fromEntries(EVENT_TYPES.map(t=>[t.k,t.i]));
+// 兼容：e.type 可能是旧版字符串或新版数组，统一成数组
+function eventTypes(e){ return Array.isArray(e.type) ? e.type : (e.type ? [e.type] : []); }
+function eventTypeBadge(e){ const ts = eventTypes(e); return (ts.map(t=>TYPE_ICON[t]||'📌').join('')) + ' ' + ts.join('、'); }
 
 const STORAGE_KEY = 'ledger-data-v2';
 const SETTINGS_KEY = 'ledger-settings-v1';
@@ -512,7 +515,7 @@ let state = { people: [], events: [], connections: [] };
 let activeTab = '全部';
 let activeTagFilter = null;   // 首页按标签筛选（点标签云 / 点 #标签 时设置）
 let activePersonId = null;
-let pendingEventType = '见面';
+let pendingEventTypes = new Set(['见面']);   // 多选：一笔往来可标多个类型
 let editingEventId = null;
 let cachedSuggestions = null;
 let cachedSuggestionsOffline = false;
@@ -1084,7 +1087,7 @@ function scoreBreakdown(p){
   if(trust) parts.push({label:'信任'+(p.trust||0)+'/5', val:trust});
   if(p.mutualHelp) parts.push({label:'互相帮助', val:10});
   if(p.sharedProject) parts.push({label:'共同项目', val:10});
-  if(evs.some(e=>e.type==='引荐')) parts.push({label:'曾引荐', val:10});
+  if(evs.some(e=>eventTypes(e).includes('引荐'))){ parts.push({label:'曾引荐', val:10}); }
   const total = Math.min(100, parts.reduce((s,x)=>s+x.val,0));
   return { total, parts };
 }
@@ -1358,7 +1361,7 @@ function computeScore(p){
   const trust = (p.trust||0) * 4; // max 20
   const help = p.mutualHelp ? 10 : 0;
   const proj = p.sharedProject ? 10 : 0;
-  const introduced = evs.some(e=>e.type==='引荐') ? 10 : 0;
+  const introduced = evs.some(e=>eventTypes(e).includes('引荐')) ? 10 : 0;
   return Math.min(100, recency+freq+trust+help+proj+introduced);
 }
 function scoreBand(score){
@@ -1374,7 +1377,7 @@ function lastContactText(personId){
   if(d===0) return '今天联系过';
   if(d===1) return '昨天联系过';
   if(d<0) return '有一条未来安排';
-  return `${d} 天前 · ${TYPE_ICON[latest.type]||''} ${latest.type}`;
+  return `${d} 天前 · ${eventTypeBadge(latest)}`;
 }
 function initials(name){ if(!name) return '？'; return name.length<=2 ? name : name.slice(0,2); }
 
@@ -1506,18 +1509,19 @@ function openTimeline(){
     let evs = state.events.slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
     if(fp) evs = evs.filter(e=> e.personId===fp);
     if(ft) evs = evs.filter(e=>{ const p=personById(e.personId); return (p&&(p.tags||[]).includes(ft)); });
-    if(fy) evs = evs.filter(e=> e.type===fy);
+    if(fy) evs = evs.filter(e=> eventTypes(e).includes(fy));
     if(kw) evs = evs.filter(e=>{
       const p = personById(e.personId);
       return (e.content && e.content.toLowerCase().includes(kw))
-          || (e.type && e.type.toLowerCase().includes(kw))
-          || (p && p.name && p.name.toLowerCase().includes(kw));
+        || (eventTypes(e).join('、').toLowerCase().includes(kw))
+        || (p && p.name && p.name.toLowerCase().includes(kw))
+        || ((p&&(p.tags||[]).some(t=>t.toLowerCase().includes(kw))));
     });
     const list = document.getElementById('tlList');
     if(!evs.length){ list.innerHTML = '<div class="empty-hint">没有符合条件的往来。</div>'; return; }
     list.innerHTML = evs.map(e=>{ const p = personById(e.personId); return `<div class="tl-row" data-id="${e.personId}">
       <div class="tl-date">${escapeHtml(e.date)}</div>
-      <div class="tl-body"><b>${escapeHtml(p? p.name : '?')}</b> · ${TYPE_ICON[e.type]||''} ${escapeHtml(e.type)}
+      <div class="tl-body"><b>${escapeHtml(p? p.name : '?')}</b> · ${eventTypeBadge(e)}
         <div class="tl-content">${renderContent(e.content)}</div>
         ${eventPhotosHTML(e)}
       </div>
@@ -1579,7 +1583,7 @@ function localSummary(p, evs){
   if(p.mutualHelp) bits.push('互相帮过忙。');
   if(p.sharedProject) bits.push('有共同项目在合作。');
   if(p.notes) bits.push(p.notes);
-  if(evs.length) bits.push(`最近一次往来是 ${evs[0].date} 的「${evs[0].type}」：${evs[0].content}`);
+  if(evs.length) bits.push(`最近一次往来是 ${evs[0].date} 的「${eventTypes(evs[0]).join('、')}」：${evs[0].content}`);
   return bits.join('');
 }
 
@@ -1602,7 +1606,7 @@ document.getElementById('genSuggestBtn').onclick = async ()=>{
       const score = computeScore(p);
       const evs = state.events.filter(e=>e.personId===p.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
       const d = evs.length? daysAgo(evs[0].date) : 9999;
-      return {p, score, d, recentNotes: evs.slice(0,3).map(e=>`[${e.date}] ${e.type}: ${e.content}`).join(' / ')};
+      return {p, score, d, recentNotes: evs.slice(0,3).map(e=>`[${e.date}] ${eventTypes(e).join('、')}: ${e.content}`).join(' / ')};
     }).filter(c=>c.d>=20)
       .sort((a,b)=> (b.score*0.7 + b.d*0.3) - (a.score*0.7 + a.d*0.3) )
       .slice(0,4);
@@ -1943,11 +1947,11 @@ function renderPanel(){
 
     <div class="section-label">往来记录（${evs.length}）</div>
     <div class="timeline" id="timeline">
-      ${evs.length? evs.map(e=>`<div class="tl-item"><div class="tl-icon">${TYPE_ICON[e.type]||'📌'}</div><div class="tl-body"><div class="tl-top"><span class="tl-type">${escapeHtml(e.type)}</span><span class="tl-date">${escapeHtml(e.date)}</span></div><div class="tl-content">${renderContent(e.content)}</div></div><div class="tl-actions"><button class="tl-edit" data-eid="${e.id}" title="编辑">✎</button><button class="tl-del" data-eid="${e.id}" title="删除">✕</button></div></div>${eventPhotosHTML(e)}`).join('') : `<div style="font-size:13px;color:rgba(241,232,214,0.35);padding:6px 2px;">还没有往来，记一笔看看</div>`}
+      ${evs.length? evs.map(e=>`<div class="tl-item"><div class="tl-icon">${eventTypes(e).map(t=>TYPE_ICON[t]||'📌').join('')}</div><div class="tl-body"><div class="tl-top"><span class="tl-type">${escapeHtml(eventTypes(e).join('、'))}</span><span class="tl-date">${escapeHtml(e.date)}</span></div><div class="tl-content">${renderContent(e.content)}</div></div><div class="tl-actions"><button class="tl-edit" data-eid="${e.id}" title="编辑">✎</button><button class="tl-del" data-eid="${e.id}" title="删除">✕</button></div></div>${eventPhotosHTML(e)}`).join('') : `<div style="font-size:13px;color:rgba(241,232,214,0.35);padding:6px 2px;">还没有往来，记一笔看看</div>`}
     </div>
 
     <div class="add-event-form">
-      <div class="type-picker" id="typePicker">${EVENT_TYPES.map(t=>`<button class="type-chip ${t.k===pendingEventType?'active':''}" data-type="${t.k}">${t.i} ${t.k}</button>`).join('')}</div>
+      <div class="type-picker" id="typePicker">${EVENT_TYPES.map(t=>`<button class="type-chip ${pendingEventTypes.has(t.k)?'active':''}" data-type="${t.k}">${t.i} ${t.k}</button>`).join('')}</div>
       <div class="row"><input type="date" id="f-eventdate" value="${new Date().toISOString().slice(0,10)}" /></div>
       <div class="mention-wrap"><textarea id="f-eventcontent" rows="4" placeholder="记下这件事、这句话、这份情分… 可 @ 库内任何人 / #标签"></textarea></div>
       <div class="ev-photos" id="evPhotos"></div>
@@ -2110,8 +2114,10 @@ function renderPanel(){
 
   // 切换类型：只更新高亮与状态，不再整面板重建（避免清空已填写的内容）
   panel.querySelectorAll('.type-chip').forEach(chip=>{ chip.onclick = ()=>{
-    pendingEventType = chip.dataset.type;
-    panel.querySelectorAll('.type-chip').forEach(ch=>ch.classList.toggle('active', ch===chip));
+    const k = chip.dataset.type;
+    if(pendingEventTypes.has(k)) pendingEventTypes.delete(k); else pendingEventTypes.add(k);
+    if(pendingEventTypes.size===0) pendingEventTypes.add(k);   // 至少保留一个类型
+    panel.querySelectorAll('.type-chip').forEach(ch=>ch.classList.toggle('active', pendingEventTypes.has(ch.dataset.type)));
   }; });
 
   // 编辑已有往来
@@ -2120,10 +2126,10 @@ function renderPanel(){
       const e = state.events.find(x=>x.id===btn.dataset.eid);
       if(!e) return;
       editingEventId = e.id;
-      pendingEventType = e.type;
+      pendingEventTypes = new Set(eventTypes(e));
       document.getElementById('f-eventdate').value = e.date;
       document.getElementById('f-eventcontent').value = e.content;
-      panel.querySelectorAll('.type-chip').forEach(ch=>ch.classList.toggle('active', ch.dataset.type===e.type));
+      panel.querySelectorAll('.type-chip').forEach(ch=>ch.classList.toggle('active', pendingEventTypes.has(ch.dataset.type)));
       draftEventPhotos = (e.photos||[]).slice(); renderEvPhotos();
       document.getElementById('saveEventBtn').textContent = '保存修改';
       showToast('正在编辑这笔，改完点保存');
@@ -2136,13 +2142,13 @@ function renderPanel(){
     if(!content){ showToast('写点内容再记吧'); return; }
     if(editingEventId){
       const e = state.events.find(x=>x.id===editingEventId);
-      if(e){ e.type = pendingEventType; e.date = date; e.content = content; e.photos = draftEventPhotos.slice(); }
+      if(e){ e.type = [...pendingEventTypes]; e.date = date; e.content = content; e.photos = draftEventPhotos.slice(); }
       applyTagsToOwners([p.id], content);   // 编辑时同步 #标签 到人物 tags
       editingEventId = null;
       document.getElementById('saveEventBtn').textContent = '记这一笔';
       showToast('已更新');
     } else {
-      state.events.push({ id: uid(), personId: p.id, type: pendingEventType, date, content, photos: draftEventPhotos.slice() });
+      state.events.push({ id: uid(), personId: p.id, type: [...pendingEventTypes], date, content, photos: draftEventPhotos.slice() });
       applyTagsToOwners([p.id], content);
       showToast('记下了');
     }
@@ -2165,7 +2171,7 @@ function renderPanel(){
     }
     btn.disabled = true; btn.textContent = '生成中…';
     try{
-      const timelineText = evs.slice(0,20).map(e=>`[${e.date}] ${e.type}: ${e.content}`).join('\n') || '（暂无记录）';
+      const timelineText = evs.slice(0,20).map(e=>`[${e.date}] ${eventTypes(e).join('、')}: ${e.content}`).join('\n') || '（暂无记录）';
       const introBy = p.introducedBy ? personById(p.introducedBy) : null;
       const prompt = `请你根据下面这个人的资料，写一段自然口语化的中文总结（80-120字），像是在提醒用户"这个人是谁、你们什么关系、有什么值得记住的细节"。不要用列表，写成一段连续的话，语气平实亲切，可以适当引用具体细节（比如喜欢的东西、正在做的事、介绍过谁）。不要输出多余的话，只输出这一段总结本身。\n\n姓名：${p.name}\n身份：${(p.roles||[]).join('、')||'未知'}\n标签：${(p.tags||[]).join('、')||'无'}\n认识时间/方式：${p.metDate||'未知'} ${p.metContext||''}\n介绍人：${introBy?introBy.name:'无'}\n信任程度：${p.trust}/5\n备注：${p.notes||'无'}\n往来记录：\n${timelineText}`;
       const text = await callClaude(prompt);
@@ -2281,18 +2287,18 @@ function renderPanel(){
 }
 
 // ---- 全局「记一笔」浮钮 ----
-let qaEventType = '见面';
+let qaEventTypes = new Set(['见面']);   // 速记：类型可多选
 function openQuickAdd(){
   const ov = document.getElementById('quickAddOverlay');
   const panel = document.getElementById('quickAddPanel');
-  qaEventType = '见面';
+  qaEventTypes = new Set(['见面']);
   qaDraftPhotos = [];
   panel.innerHTML = `
     <div class="panel-handle"></div>
     <div class="panel-head"><h2>记一笔</h2><button class="icon-btn" id="qaClose">✕</button></div>
     <p class="qa-hint">打 @ 选库里的人，这笔会自动归到<b>每个人</b>名下（支持多人）；也可在下面手动加归属。</p>
     <div class="add-event-form">
-      <div class="type-picker" id="qaType">${EVENT_TYPES.map(t=>`<button class="type-chip ${t.k==='见面'?'active':''}" data-type="${t.k}">${t.i} ${t.k}</button>`).join('')}</div>
+      <div class="type-picker" id="qaType">${EVENT_TYPES.map(t=>`<button class="type-chip ${qaEventTypes.has(t.k)?'active':''}" data-type="${t.k}">${t.i} ${t.k}</button>`).join('')}</div>
       <div class="qa-owner" id="qaOwner"></div>
       <div class="mention-wrap"><textarea id="qa-content" rows="3" placeholder="记下这件事… 例如：@张明 周末爬山，顺手 #香港 记一笔"></textarea></div>
       <div class="ev-photos" id="qaPhotos"></div>
@@ -2317,7 +2323,12 @@ function openQuickAdd(){
   }});
 
   const typeBtns = panel.querySelectorAll('#qaType button');
-  typeBtns.forEach(b=> b.onclick = ()=>{ qaEventType = b.dataset.type; typeBtns.forEach(x=>x.classList.toggle('active', x===b)); });
+  typeBtns.forEach(b=> b.onclick = ()=>{
+    const k = b.dataset.type;
+    if(qaEventTypes.has(k)) qaEventTypes.delete(k); else qaEventTypes.add(k);
+    if(qaEventTypes.size===0) qaEventTypes.add(k);   // 至少保留一个类型
+    typeBtns.forEach(x=>x.classList.toggle('active', qaEventTypes.has(x.dataset.type)));
+  });
 
   const ownerSel = document.getElementById('qaOwnerSel');
   const ownerLine = document.getElementById('qaOwner');
@@ -2362,7 +2373,7 @@ function openQuickAdd(){
     const date = document.getElementById('qa-date').value || new Date().toISOString().slice(0,10);
     const photos = qaDraftPhotos.slice();
     [...owners].forEach(id=>{
-      state.events.push({ id: uid(), personId: id, type: qaEventType, date, content, photos: photos.slice() });
+      state.events.push({ id: uid(), personId: id, type: [...qaEventTypes], date, content, photos: photos.slice() });
     });
     applyTagsToOwners([...owners], content);   // #标签 汇聚到各 owner 的 tags，标签云/筛选生效
     qaDraftPhotos = [];
