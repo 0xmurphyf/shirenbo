@@ -904,7 +904,24 @@ function renderContent(text){
   });
   return html.replace(/\u0000(\d+)\u0000/g, (_,i)=> phs[+i]);
 }
-// 在 textarea 中输入 @ 时，弹出库内的人 + 标签供选择，选中即插入 @姓名 / @标签
+// 从文本提取 #标签（不含 #），用于把内容里的标签汇聚到人物 tags
+function extractHashTags(text){
+  if(!text) return [];
+  const out = []; const re = /#([^\s#@]+)/g; let m;
+  while((m = re.exec(text))){ const t = m[1].trim(); if(t) out.push(t); }
+  return out;
+}
+// 把内容里的 #标签 应用到若干人物的 tags（去重），让首页标签云/筛选生效
+function applyTagsToOwners(ownerIds, content){
+  const tags = extractHashTags(content);
+  if(!tags.length) return;
+  ownerIds.forEach(id=>{
+    const pp = personById(id); if(!pp) return;
+    if(!pp.tags) pp.tags = [];
+    tags.forEach(t=>{ if(!pp.tags.includes(t)) pp.tags.push(t); });
+  });
+}
+// 在 textarea 中输入 @ 时，弹出库内的人 + 标签供选择，选中即插入 @姓名 / #标签
 function attachMention(ta, opts){
   if(!ta) return;
   const withTags = !!(opts && opts.tags);
@@ -940,11 +957,13 @@ function attachMention(ta, opts){
     if(kind==='tag'){
       const set = [...new Set(state.people.flatMap(p=>(p.tags||[])))];
       const tagList = set.filter(t=> t.toLowerCase().includes(q)).slice(0,8);
-      if(!tagList.length){ closePopup(); return; }
+      const qn = q.trim();
+      const createItem = qn ? `<div class="mention-item create tag" data-prefix="#" data-name="${escapeHtml(qn)}">＋ 新建标签「${escapeHtml(qn)}」</div>` : '';
+      if(!tagList.length && !createItem){ return; }   // 完全没输入才不弹
       closePopup();
       popup = document.createElement('div');
       popup.className = 'mention-pop';
-      popup.innerHTML = tagList.map(t=>`<div class="mention-item tag" data-prefix="#" data-name="${escapeHtml(t)}">＃ ${escapeHtml(t)}</div>`).join('');
+      popup.innerHTML = tagList.map(t=>`<div class="mention-item tag" data-prefix="#" data-name="${escapeHtml(t)}">＃ ${escapeHtml(t)}</div>`).join('') + createItem;
       ta.parentElement.appendChild(popup);
       popup.querySelectorAll('.mention-item').forEach(it=> it.onclick = ()=> insert('#', it.dataset.name));
       return;
@@ -2118,11 +2137,13 @@ function renderPanel(){
     if(editingEventId){
       const e = state.events.find(x=>x.id===editingEventId);
       if(e){ e.type = pendingEventType; e.date = date; e.content = content; e.photos = draftEventPhotos.slice(); }
+      applyTagsToOwners([p.id], content);   // 编辑时同步 #标签 到人物 tags
       editingEventId = null;
       document.getElementById('saveEventBtn').textContent = '记这一笔';
       showToast('已更新');
     } else {
       state.events.push({ id: uid(), personId: p.id, type: pendingEventType, date, content, photos: draftEventPhotos.slice() });
+      applyTagsToOwners([p.id], content);
       showToast('记下了');
     }
     draftEventPhotos = [];
@@ -2343,6 +2364,7 @@ function openQuickAdd(){
     [...owners].forEach(id=>{
       state.events.push({ id: uid(), personId: id, type: qaEventType, date, content, photos: photos.slice() });
     });
+    applyTagsToOwners([...owners], content);   // #标签 汇聚到各 owner 的 tags，标签云/筛选生效
     qaDraftPhotos = [];
     await saveState();
     ov.classList.remove('show');
