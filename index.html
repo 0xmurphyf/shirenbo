@@ -253,6 +253,9 @@
   .add-chip-row input{flex:1; background:rgba(0,0,0,0.15); border:1px solid var(--shell-line); border-radius:8px; color:var(--paper); padding:7px 10px; font-size:12px;}
   .add-chip-row button{background:var(--shell-3); border:1px solid var(--shell-line); color:var(--paper); border-radius:8px; padding:0 12px; font-size:16px; cursor:pointer;}
   .chip-x{cursor:pointer; margin-left:4px; opacity:0.6;}
+  .chip-auto{border-style:dashed; border-color:rgba(123,175,156,0.5); color:var(--jade-light); display:inline-flex; align-items:center; gap:4px;}
+  .chip-tag{font-size:9px; padding:1px 5px; border-radius:6px; background:rgba(123,175,156,0.18); color:var(--jade-light); opacity:0.8;}
+  .knows-auto-label{font-size:11px; color:rgba(123,175,156,0.7); margin:8px 0 4px;}
 
   @media (max-width:380px){ .field-grid{grid-template-columns:1fr;} }
 
@@ -934,7 +937,7 @@ function attachMention(ta, opts){
   let popup = null;
   const closePopup = ()=>{ if(popup){ popup.remove(); popup=null; } };
   const newPerson = (name)=>{
-    const np = { id: uid(), name, roles:['朋友'], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', notes:'', aiSummary:null, photo:null, createdAt: Date.now() };
+    const np = { id: uid(), name, roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', notes:'', aiSummary:null, photo:null, createdAt: Date.now() };
     state.people.unshift(np);
     if(onCreate) onCreate(np);
     showToast('已把「'+name+'」加入簿子');
@@ -1695,7 +1698,7 @@ document.getElementById('genSuggestBtn').onclick = async ()=>{
 };
 
 document.getElementById('addPersonBtn').onclick = ()=>{
-  const p = { id: uid(), name:'', roles:['朋友'], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', notes:'', aiSummary:null, photo:null, nextContact:null, createdAt: Date.now() };
+  const p = { id: uid(), name:'', roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', notes:'', aiSummary:null, photo:null, nextContact:null, createdAt: Date.now() };
   state.people.unshift(p);
   openPerson(p.id, true);
 };
@@ -2147,9 +2150,17 @@ function renderPanel(){
 
   function renderKnowsEdit(){
     const conns = connectionsOf(p.id);
-    document.getElementById('knowsEdit').innerHTML = conns.length
+    // 提及互认：从往来推断，与该人相关的 mutual 边（自动识别，不可手动删）
+    const mg = mentionGraph();
+    const auto = [...mg.mutual].map(pr=>{ const [x,y]=pr.split('|'); return x===p.id? y : (y===p.id? x : null); }).filter(Boolean)
+      .map(id=> personById(id)).filter(Boolean);
+    const manualHtml = conns.length
       ? conns.map(c=>`<span class="chip">${escapeHtml(c.other.name||'未命名')}<span class="chip-x" data-cid="${c.connId}">✕</span></span>`).join('')
       : `<span style="font-size:12px;color:rgba(241,232,214,0.3);">还没有添加</span>`;
+    const autoHtml = auto.length
+      ? `<div class="knows-auto-label">自动识别（往来提及互认）</div>` + auto.map(o=>`<span class="chip chip-auto">${escapeHtml(o.name||'未命名')}<span class="chip-tag">提及</span></span>`).join('')
+      : '';
+    document.getElementById('knowsEdit').innerHTML = manualHtml + autoHtml;
     document.querySelectorAll('#knowsEdit .chip-x').forEach(x=>{
       x.onclick = ()=>{ removeConnection(x.dataset.cid); markDirty(); renderKnowsEdit(); };
     });
@@ -2355,10 +2366,9 @@ function openQuickAdd(){
     <div class="add-event-form">
       <div class="type-picker" id="qaType">${EVENT_TYPES.map(t=>`<button class="type-chip ${qaEventTypes.has(t.k)?'active':''}" data-type="${t.k}">${t.i} ${t.k}</button>`).join('')}</div>
       <div class="qa-owner" id="qaOwner"></div>
-      <div class="mention-wrap"><textarea id="qa-content" rows="3" placeholder="记下这件事… 例如：@张明 周末爬山，顺手 #香港 记一笔"></textarea></div>
+      <div class="mention-wrap"><textarea id="qa-content" rows="3" placeholder="记下这件事… 例如：@张明 周末爬山，顺手 #香港 记一笔（@ 谁就归谁）"></textarea></div>
       <div class="ev-photos" id="qaPhotos"></div>
       <label class="ev-photo-add"><input type="file" id="qaPhotoInput" accept="image/*" multiple hidden/><span>📎 加照片</span></label>
-      <select id="qaOwnerSel"><option value="">— 归属给谁 —</option>${state.people.map(o=>`<option value="${o.id}">${escapeHtml(o.name||'未命名')}</option>`).join('')}</select>
       <input type="date" id="qa-date" value="${new Date().toISOString().slice(0,10)}" />
       <button class="save-row-btn" id="qaSave">记下来</button>
     </div>
@@ -2368,11 +2378,6 @@ function openQuickAdd(){
   document.getElementById('qaClose').onclick = ()=> ov.classList.remove('show');
 
   attachMention(document.getElementById('qa-content'), {tags:true, allowCreate:true, onCreate:(np)=>{
-    const sel = document.getElementById('qaOwnerSel');
-    if(sel && !sel.querySelector(`option[value="${np.id}"]`)){
-      const opt = document.createElement('option'); opt.value = np.id; opt.textContent = np.name; sel.appendChild(opt);
-    }
-    if(sel) sel.value = np.id;
     const ownerLine = document.getElementById('qaOwner');
     if(ownerLine) ownerLine.innerHTML = '归属：<b>'+escapeHtml(np.name)+'</b>（新建并归到 TA）';
   }});
@@ -2385,21 +2390,18 @@ function openQuickAdd(){
     typeBtns.forEach(x=>x.classList.toggle('active', qaEventTypes.has(x.dataset.type)));
   });
 
-  const ownerSel = document.getElementById('qaOwnerSel');
   const ownerLine = document.getElementById('qaOwner');
   const detectOwner = ()=>{
     const txt = document.getElementById('qa-content').value;
     const hits = [...new Set(state.people.filter(p=> p.name && txt.includes('@'+p.name)).map(p=>p.id))];
     if(hits.length){
-      ownerSel.value = hits[0];
       const names = hits.map(id=>(personById(id)||{}).name||'').filter(Boolean);
-      ownerLine.innerHTML = '归属：<b>'+escapeHtml(names.join('、'))+'</b>（@ 自动识别，'+hits.length+'人，可改）';
+      ownerLine.innerHTML = '归属：<b>'+escapeHtml(names.join('、'))+'</b>（@ 自动识别，'+hits.length+'人）';
     } else {
-      ownerLine.innerHTML = ownerSel.value ? '归属：<b>'+escapeHtml((personById(ownerSel.value)||{}).name||'')+'</b>' : '未选归属人';
+      ownerLine.innerHTML = '未选归属人（@ 谁就归谁）';
     }
   };
   document.getElementById('qa-content').addEventListener('input', detectOwner);
-  ownerSel.addEventListener('change', detectOwner);
   detectOwner();
 
   // 快速记一笔里的照片附件
@@ -2420,11 +2422,10 @@ function openQuickAdd(){
   document.getElementById('qaSave').onclick = async ()=>{
     const content = document.getElementById('qa-content').value.trim();
     if(!content){ showToast('写点内容吧'); return; }
-    // 归属：手动选的 owner + 内容里 @ 的所有库内的人，去重（支持多人）
+    // 归属：内容里 @ 的所有库内的人（支持多人）；去掉了手动下拉，@ 即归属
     const owners = new Set();
-    if(ownerSel.value) owners.add(ownerSel.value);
     state.people.forEach(p=>{ if(p.name && content.includes('@'+p.name)) owners.add(p.id); });
-    if(owners.size===0){ showToast('先 @ 一个人，或在下拉里选归属'); return; }
+    if(owners.size===0){ showToast('先 @ 一个人，归属给 TA'); return; }
     const date = document.getElementById('qa-date').value || new Date().toISOString().slice(0,10);
     const photos = qaDraftPhotos.slice();
     [...owners].forEach(id=>{
