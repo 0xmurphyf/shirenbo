@@ -844,8 +844,6 @@ async function loadState(){
     if(!p.contacts) p.contacts = p.phone ? [{type:'电话/微信', value:p.phone}] : [];
     if(!p.socials) p.socials = [];
     if(p.trust===undefined) p.trust = 3;
-    if(p.mutualHelp===undefined) p.mutualHelp = false;
-    if(p.sharedProject===undefined) p.sharedProject = false;
     if(!p.introducedBy) p.introducedBy = null;
     if(p.nextContact===undefined) p.nextContact = null;   // K. 下次联系目标日
     if(!p.aiSummary) p.aiSummary = null;
@@ -944,7 +942,7 @@ function attachMention(ta, opts){
   let popup = null;
   const closePopup = ()=>{ if(popup){ popup.remove(); popup=null; } };
   const newPerson = (name)=>{
-    const np = { id: uid(), name, roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', company:'', formerCompany:'', notes:'', aiSummary:null, photo:null, createdAt: Date.now() };
+    const np = { id: uid(), name, roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, phone:'', workPhone:'', company:'', formerCompany:'', notes:'', aiSummary:null, photo:null, createdAt: Date.now() };
     state.people.unshift(np);
     if(onCreate) onCreate(np);
     showToast('已把「'+name+'」加入簿子');
@@ -1096,8 +1094,6 @@ function scoreBreakdown(p){
   if(freq) parts.push({label:'往来频次', val:freq});
   const trust = (p.trust||0) * 4;
   if(trust) parts.push({label:'信任'+(p.trust||0)+'/5', val:trust});
-  if(p.mutualHelp) parts.push({label:'互相帮助', val:10});
-  if(p.sharedProject) parts.push({label:'共同项目', val:10});
   if(evs.some(e=>eventTypes(e).includes('引荐'))){ parts.push({label:'曾引荐', val:10}); }
   const total = Math.min(100, parts.reduce((s,x)=>s+x.val,0));
   return { total, parts };
@@ -1425,8 +1421,6 @@ function mergePerson(srcId, tgtId){
   (src.contacts||[]).forEach(c=> uniqPush(tgt.contacts, c));
   (src.socials||[]).forEach(s=> uniqPush(tgt.socials, s));
   if(src.notes && src.notes.trim()) tgt.notes = (tgt.notes? tgt.notes+'\n' : '') + src.notes;
-  tgt.mutualHelp = tgt.mutualHelp || src.mutualHelp;
-  tgt.sharedProject = tgt.sharedProject || src.sharedProject;
   tgt.trust = Math.max(tgt.trust||0, src.trust||0);
   // 下次联系目标日：取更早（更紧迫）的那个
   if(src.nextContact && (!tgt.nextContact || src.nextContact < tgt.nextContact)) tgt.nextContact = src.nextContact;
@@ -1449,10 +1443,8 @@ function computeScore(p){
   }
   const freq = Math.min(evs.length, 10) * 2; // max 20
   const trust = (p.trust||0) * 4; // max 20
-  const help = p.mutualHelp ? 10 : 0;
-  const proj = p.sharedProject ? 10 : 0;
   const introduced = evs.some(e=>eventTypes(e).includes('引荐')) ? 10 : 0;
-  return Math.min(100, recency+freq+trust+help+proj+introduced);
+  return Math.min(100, recency+freq+trust+introduced);
 }
 function scoreBand(score){
   if(score>=65) return {cls:'hi', label:'稳固 · 细水长流'};
@@ -1670,8 +1662,6 @@ function localSummary(p, evs){
   const bits = [];
   bits.push(`${p.name||'这位'}是${(p.roles||[]).join('、')||'你的人脉'}。`);
   if(p.metContext) bits.push(`你们${p.metContext}认识的。`);
-  if(p.mutualHelp) bits.push('互相帮过忙。');
-  if(p.sharedProject) bits.push('有共同项目在合作。');
   if(p.notes) bits.push(p.notes);
   if(evs.length) bits.push(`最近一次往来是 ${evs[0].date} 的「${eventTypes(evs[0]).join('、')}」：${evs[0].content}`);
   return bits.join('');
@@ -1730,7 +1720,7 @@ document.getElementById('genSuggestBtn').onclick = async ()=>{
 };
 
 document.getElementById('addPersonBtn').onclick = ()=>{
-  const p = { id: uid(), name:'', roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', company:'', formerCompany:'', notes:'', aiSummary:null, photo:null, nextContact:null, createdAt: Date.now() };
+  const p = { id: uid(), name:'', roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, phone:'', workPhone:'', company:'', formerCompany:'', notes:'', aiSummary:null, photo:null, nextContact:null, createdAt: Date.now() };
   state.people.unshift(p);
   openPerson(p.id, true);
 };
@@ -1750,35 +1740,34 @@ async function seedExampleData(){
   const jack = { id: uid(), name:'张明 (Jack)', roles:['朋友'], tags:['大学同学','香港'],
     contacts:['微信: zhangming_jk'], socials:['Twitter: @jackzhang'], phone:'138-0010-2233', workPhone:'',
     birthday: mmddFromNow(9), metDate: yearsAgoDate(8).slice(0,7), metContext:'大学同宿舍',
-    introducedBy:null, trust:5, mutualHelp:true, sharedProject:true,
+    introducedBy:null, trust:5,
     notes:'大学室友，现在做跨境投资，喜欢威士忌，孩子今年中考。', aiSummary:null, createdAt: Date.now() };
 
   const tom = { id: uid(), name:'Tom', roles:['朋友'], tags:['AI'], contacts:[], socials:[], phone:'', workPhone:'',
-    birthday:'', metDate:'', metContext:'张明的大学同学', introducedBy: jack.id, trust:3,
-    mutualHelp:false, sharedProject:false, notes:'在做 AI 创业，还在早期阶段。', aiSummary:null, createdAt: Date.now() };
+    birthday:'', metDate:'', metContext:'张明的大学同学', notes:'在做 AI 创业，还在早期阶段。', aiSummary:null, createdAt: Date.now() };
 
   const amy = { id: uid(), name:'Amy', roles:['开发者','朋友'], tags:['Web3','Sui'],
     contacts:['微信: amy_dev'], socials:['GitHub: amydev'], phone:'', workPhone:'',
     birthday:'', metDate:'', metContext:'张明介绍认识', introducedBy: jack.id, trust:4,
-    mutualHelp:true, sharedProject:false, notes:'全栈开发者，帮忙看过一次智能合约代码，提了安全建议。', aiSummary:null, createdAt: Date.now() };
+    notes:'全栈开发者，帮忙看过一次智能合约代码，提了安全建议。', aiSummary:null, createdAt: Date.now() };
 
   const david = { id: uid(), name:'David (Bio-Rad)', roles:['工作人脉','投资人'], tags:['IVD','香港'],
     contacts:['Email: david@bio-rad.com'], socials:['LinkedIn: david-biorad'], phone:'', workPhone:'+852 3001 8822',
     birthday:'', metDate: yearsAgoDate(4).slice(0,7), metContext:'香港 Token2049', introducedBy:null, trust:4,
-    mutualHelp:false, sharedProject:false, notes:'Bio-Rad 香港区业务负责人，聊过跨境合作的可能性。', aiSummary:null, createdAt: Date.now() };
+    notes:'Bio-Rad 香港区业务负责人，聊过跨境合作的可能性。', aiSummary:null, createdAt: Date.now() };
 
   const lisa = { id: uid(), name:'Lisa', roles:['工作人脉'], tags:['IVD'], contacts:[], socials:[], phone:'', workPhone:'',
     birthday:'', metDate:'', metContext:'David 介绍认识', introducedBy: david.id, trust:3,
-    mutualHelp:false, sharedProject:false, notes:'David 的同事，负责渠道对接细节。', aiSummary:null, createdAt: Date.now() };
+    notes:'David 的同事，负责渠道对接细节。', aiSummary:null, createdAt: Date.now() };
 
   const murphyF = { id: uid(), name:'MurphyF', roles:['开发者','合作伙伴'], tags:['Sui','Crypto'],
     contacts:[], socials:['Twitter: @murphyf_sui'], phone:'139-8800-6611', workPhone:'',
     birthday:'', metDate: yearsAgoDate(2).slice(0,7), metContext:'Sui 生态活动认识', introducedBy:null, trust:5,
-    mutualHelp:true, sharedProject:true, notes:'Sui 生态核心开发者，一起拿过一个 Grant 项目，很久没联系了。', aiSummary:null, createdAt: Date.now() };
+    notes:'Sui 生态核心开发者，一起拿过一个 Grant 项目，很久没联系了。', aiSummary:null, createdAt: Date.now() };
 
   const shinami = { id: uid(), name:'Shinami', roles:['网友'], tags:['Crypto'], contacts:[], socials:['Twitter: @shinami'], phone:'', workPhone:'',
     birthday:'', metDate:'', metContext:'MurphyF 介绍认识', introducedBy: murphyF.id, trust:2,
-    mutualHelp:false, sharedProject:false, notes:'在 Discord 认识，聊过几次链上话题。', aiSummary:null, createdAt: Date.now() };
+    notes:'在 Discord 认识，聊过几次链上话题。', aiSummary:null, createdAt: Date.now() };
 
   const newPeople = [jack, tom, amy, david, lisa, murphyF, shinami];
   state.people.push(...newPeople);
@@ -2022,10 +2011,6 @@ function renderPanel(){
 
     <div class="section-label">关系状态</div>
     <div class="trust-row"><label>信任程度</label><div class="trust-stars" id="trustStars">${[1,2,3,4,5].map(i=>`<span class="star ${i<=p.trust?'on':''}" data-v="${i}">★</span>`).join('')}</div></div>
-    <div class="toggle-row">
-      <div class="toggle ${p.mutualHelp?'on':''}" id="toggleHelp">🤝 互相帮助过</div>
-      <div class="toggle ${p.sharedProject?'on':''}" id="toggleProject">📁 有共同项目</div>
-    </div>
     <div class="next-contact-row" id="nextContactRow">
       ${p.nextContact ? `<span class="nc-flag">📅 目标 ${escapeHtml(p.nextContact)}${daysUntil(p.nextContact)<=0?'（已逾期 '+Math.abs(daysUntil(p.nextContact))+' 天）':'（还有 '+daysUntil(p.nextContact)+' 天）'}</span><button class="mini-btn" id="markContactedBtn">标记已联系</button>` : `<span class="nc-flag dim">还没设下次联系目标日</span>`}
     </div>
@@ -2199,8 +2184,6 @@ function renderPanel(){
   document.querySelectorAll('#trustStars .star').forEach(s=>{
     s.onclick = ()=>{ p.trust = +s.dataset.v; markDirty(); renderPanel(); };
   });
-  document.getElementById('toggleHelp').onclick = ()=>{ p.mutualHelp = !p.mutualHelp; markDirty(); renderPanel(); };
-  document.getElementById('toggleProject').onclick = ()=>{ p.sharedProject = !p.sharedProject; markDirty(); renderPanel(); };
 
   panel.querySelectorAll('.nn').forEach(n=>{ n.onclick = ()=> openPerson(n.dataset.id); });
 
