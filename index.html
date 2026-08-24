@@ -851,6 +851,8 @@ async function loadState(){
     if(!p.aiSummary) p.aiSummary = null;
     if(p.phone===undefined) p.phone = '';
     if(p.workPhone===undefined) p.workPhone = '';
+    if(p.company===undefined) p.company = '';
+    if(p.formerCompany===undefined) p.formerCompany = '';
     if(p.photo===undefined) p.photo = null;   // 头像（photo id）
   });
   state.events.forEach(e=>{ if(!e.photos) e.photos = []; });   // 往来里的场景照片（photo id 数组）
@@ -942,7 +944,7 @@ function attachMention(ta, opts){
   let popup = null;
   const closePopup = ()=>{ if(popup){ popup.remove(); popup=null; } };
   const newPerson = (name)=>{
-    const np = { id: uid(), name, roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', notes:'', aiSummary:null, photo:null, createdAt: Date.now() };
+    const np = { id: uid(), name, roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', company:'', formerCompany:'', notes:'', aiSummary:null, photo:null, createdAt: Date.now() };
     state.people.unshift(np);
     if(onCreate) onCreate(np);
     showToast('已把「'+name+'」加入簿子');
@@ -989,7 +991,7 @@ function attachMention(ta, opts){
     popup = document.createElement('div');
     popup.className = 'mention-pop';
     const createItem = canCreate ? `<div class="mention-item create" data-prefix="@" data-create="1">＋ 把「${escapeHtml(qn)}」加入簿子</div>` : '';
-    popup.innerHTML = peopleList.map(p=>`<div class="mention-item" data-prefix="@" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>`).join('') + createItem;
+    popup.innerHTML = createItem + peopleList.map(p=>`<div class="mention-item" data-prefix="@" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>`).join('');
     ta.parentElement.appendChild(popup);
     popup.querySelectorAll('.mention-item').forEach(it=>{
       it.onclick = ()=>{
@@ -1728,7 +1730,7 @@ document.getElementById('genSuggestBtn').onclick = async ()=>{
 };
 
 document.getElementById('addPersonBtn').onclick = ()=>{
-  const p = { id: uid(), name:'', roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', notes:'', aiSummary:null, photo:null, nextContact:null, createdAt: Date.now() };
+  const p = { id: uid(), name:'', roles:[], tags:[], contacts:[], socials:[], birthday:'', metDate:'', metContext:'', introducedBy:null, trust:3, mutualHelp:false, sharedProject:false, phone:'', workPhone:'', company:'', formerCompany:'', notes:'', aiSummary:null, photo:null, nextContact:null, createdAt: Date.now() };
   state.people.unshift(p);
   openPerson(p.id, true);
 };
@@ -1978,6 +1980,8 @@ function renderPanel(){
 
     <div class="field-grid">
       <div class="field full"><label>姓名</label><input id="f-name" value="${escapeHtml(p.name)}" placeholder="怎么称呼Ta" /><div id="nameWarn" class="name-warn"></div></div>
+      <div class="field"><label>公司</label><input id="f-company" value="${escapeHtml(p.company||'')}" placeholder="现任职公司" /></div>
+      <div class="field"><label>前公司</label><input id="f-formercompany" value="${escapeHtml(p.formerCompany||'')}" placeholder="曾任职公司" /></div>
       <div class="field"><label>生日 (月-日)</label><input id="f-birthday" value="${escapeHtml(p.birthday)}" placeholder="如 08-15" /></div>
       <div class="field"><label>认识时间</label><input id="f-metdate" value="${escapeHtml(p.metDate)}" placeholder="如 2023-06" /></div>
       <div class="field"><label>电话</label><input id="f-phone" value="${escapeHtml(p.phone)}" placeholder="个人电话" inputmode="tel" /></div>
@@ -2115,7 +2119,7 @@ function renderPanel(){
       markDirty();
     });
   };
-  bindField('f-name','name'); bindField('f-birthday','birthday'); bindField('f-metdate','metDate'); bindField('f-metcontext','metContext'); bindField('f-notes','notes'); bindField('f-phone','phone'); bindField('f-workphone','workPhone');
+  bindField('f-name','name'); bindField('f-birthday','birthday'); bindField('f-metdate','metDate'); bindField('f-metcontext','metContext'); bindField('f-notes','notes'); bindField('f-phone','phone'); bindField('f-workphone','workPhone'); bindField('f-company','company'); bindField('f-formercompany','formerCompany');
   document.getElementById('f-introby').addEventListener('change', ()=>{ p.introducedBy = document.getElementById('f-introby').value || null; markDirty(); });
   document.getElementById('f-nextcontact').addEventListener('change', ()=>{ p.nextContact = document.getElementById('f-nextcontact').value || null; markDirty(); renderStaleContacts();
     const row = document.getElementById('nextContactRow');
@@ -2273,7 +2277,7 @@ function renderPanel(){
     try{
       const timelineText = evs.slice(0,20).map(e=>`[${e.date}] ${eventTypes(e).join('、')}: ${e.content}`).join('\n') || '（暂无记录）';
       const introBy = p.introducedBy ? personById(p.introducedBy) : null;
-      const prompt = `请你根据下面这个人的资料，写一段自然口语化的中文总结（80-120字），像是在提醒用户"这个人是谁、你们什么关系、有什么值得记住的细节"。不要用列表，写成一段连续的话，语气平实亲切，可以适当引用具体细节（比如喜欢的东西、正在做的事、介绍过谁）。不要输出多余的话，只输出这一段总结本身。\n\n姓名：${p.name}\n身份：${(p.roles||[]).join('、')||'未知'}\n标签：${(p.tags||[]).join('、')||'无'}\n认识时间/方式：${p.metDate||'未知'} ${p.metContext||''}\n介绍人：${introBy?introBy.name:'无'}\n信任程度：${p.trust}/5\n备注：${p.notes||'无'}\n往来记录：\n${timelineText}`;
+      const prompt = `请你根据下面这个人的资料，写一段自然口语化的中文总结（80-120字），像是在提醒用户"这个人是谁、你们什么关系、有什么值得记住的细节"。不要用列表，写成一段连续的话，语气平实亲切，可以适当引用具体细节（比如喜欢的东西、正在做的事、介绍过谁）。不要输出多余的话，只输出这一段总结本身。\n\n姓名：${p.name}\n身份：${(p.roles||[]).join('、')||'未知'}\n公司：${p.company||'无'}\n前公司：${p.formerCompany||'无'}\n标签：${(p.tags||[]).join('、')||'无'}\n认识时间/方式：${p.metDate||'未知'} ${p.metContext||''}\n介绍人：${introBy?introBy.name:'无'}\n信任程度：${p.trust}/5\n备注：${p.notes||'无'}\n往来记录：\n${timelineText}`;
       const text = await callClaude(prompt);
       p.aiSummary = { text, updatedAt: Date.now(), offline:false };
       markDirty(); renderPanel();
