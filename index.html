@@ -2191,7 +2191,7 @@ function renderPanel(){
   panel.querySelectorAll('.type-chip').forEach(chip=>{ chip.onclick = ()=>{
     const k = chip.dataset.type;
     if(pendingEventTypes.has(k)) pendingEventTypes.delete(k); else pendingEventTypes.add(k);
-    if(pendingEventTypes.size===0) pendingEventTypes.add(k);   // 至少保留一个类型
+    // 允许取消到空；保存时若无任何类型则默认「见面」
     panel.querySelectorAll('.type-chip').forEach(ch=>ch.classList.toggle('active', pendingEventTypes.has(ch.dataset.type)));
   }; });
 
@@ -2217,14 +2217,15 @@ function renderPanel(){
     if(!content){ showToast('写点内容再记吧'); return; }
     if(editingEventId){
       const e = state.events.find(x=>x.id===editingEventId);
-      if(e){ e.type = [...pendingEventTypes]; e.date = date; e.content = content; e.photos = draftEventPhotos.slice(); }
+      if(e){ e.type = pendingEventTypes.size ? [...pendingEventTypes] : ['见面']; e.date = date; e.content = content; e.photos = draftEventPhotos.slice(); }
       applyTagsToOwners([p.id], content);   // 编辑时同步 #标签 到人物 tags
       addMentionConnections(p.id, content);  // 编辑时把 @ 的人加进「认识的人」
       editingEventId = null;
       document.getElementById('saveEventBtn').textContent = '记这一笔';
       showToast('已更新');
     } else {
-      state.events.push({ id: uid(), personId: p.id, type: [...pendingEventTypes], date, content, photos: draftEventPhotos.slice() });
+      const types = pendingEventTypes.size ? [...pendingEventTypes] : ['见面'];
+      state.events.push({ id: uid(), personId: p.id, type: types, date, content, photos: draftEventPhotos.slice() });
       applyTagsToOwners([p.id], content);
       addMentionConnections(p.id, content);  // 把 @ 的人加进「认识的人」
       showToast('记下了');
@@ -2407,7 +2408,7 @@ function openQuickAdd(){
   typeBtns.forEach(b=> b.onclick = ()=>{
     const k = b.dataset.type;
     if(qaEventTypes.has(k)) qaEventTypes.delete(k); else qaEventTypes.add(k);
-    if(qaEventTypes.size===0) qaEventTypes.add(k);   // 至少保留一个类型
+    // 允许取消到空；保存时若无任何类型则默认「见面」
     typeBtns.forEach(x=>x.classList.toggle('active', qaEventTypes.has(x.dataset.type)));
   });
 
@@ -2450,7 +2451,8 @@ function openQuickAdd(){
     const date = document.getElementById('qa-date').value || new Date().toISOString().slice(0,10);
     const photos = qaDraftPhotos.slice();
     [...owners].forEach(id=>{
-      state.events.push({ id: uid(), personId: id, type: [...qaEventTypes], date, content, photos: photos.slice() });
+      const types = qaEventTypes.size ? [...qaEventTypes] : ['见面'];
+      state.events.push({ id: uid(), personId: id, type: types, date, content, photos: photos.slice() });
       addMentionConnections(id, content);   // 把 @ 的其他人加进各 owner 的「认识的人」
     });
     applyTagsToOwners([...owners], content);   // #标签 汇聚到各 owner 的 tags，标签云/筛选生效
