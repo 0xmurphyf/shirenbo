@@ -204,6 +204,8 @@
     box-shadow:0 -6px 20px rgba(0,0,0,0.35); backdrop-filter:blur(4px);}
   .save-bar .save-hint{font-size:12px; color:var(--brass-light); letter-spacing:0.5px;}
   .save-bar .save-hint::before{content:'●'; margin-right:6px; color:var(--seal-light);}
+  .save-bar .undo-redo{margin-left:auto; margin-right:auto;}
+  .save-bar .undo-redo .mini-btn:disabled{opacity:0.35; cursor:default;}
   .save-bar > div{display:flex; gap:8px; flex-shrink:0;}
   .mini-cancel{background:transparent; border:1px solid var(--shell-line); color:rgba(241,232,214,0.7); border-radius:8px; padding:9px 14px; font-size:13px; cursor:pointer;}
 
@@ -522,6 +524,7 @@ let cachedSuggestions = null;
 let cachedSuggestionsOffline = false;
 let panelDirty = false;       // 面板内是否有未写库的修改（二次确认）
 let activeIsNew = false;      // 当前打开的是否为刚新建、尚未落库的人
+let undoStack = [], redoStack = [], lastSnap = null, _lastUndoKey = null;  // 面板内编辑的撤回/重做栈
 let ledgerGroupMode = 'flat'; // 'flat' | 'group' —— 首页平铺 / 按标签分组
 let netPathMode = false;      // 关系网：是否在「查路径」模式
 let netPathFrom = null;       // 路径起点 id
@@ -873,7 +876,45 @@ async function saveState(){
   else showToast('保存失败，请重试');
 }
 // 标记面板内有未写库的改动（二次确认：只有点「确认保存」才真正落库）
-function markDirty(){ _mentionCache = null; panelDirty = true; const b=document.getElementById('saveBar'); if(b) b.style.display='flex'; }
+// 同时把「改动前的状态」压入撤回栈（自动支持撤回/重做，无需各调用点手动加）
+function markDirty(){
+  _mentionCache = null; panelDirty = true;
+  if(activePersonId && lastSnap){
+    const newSnap = panelSnapshot();
+    const newKey = JSON.stringify(newSnap);
+    if(newKey !== _lastUndoKey){ undoStack.push(lastSnap); redoStack = []; _lastUndoKey = newKey; }
+    lastSnap = newSnap;
+  }
+  updateUndoButtons();
+  const b=document.getElementById('saveBar'); if(b) b.style.display='flex';
+}
+// ---- 面板内编辑的撤回 / 重做 ----
+function panelSnapshot(){
+  const p = personById(activePersonId); if(!p) return null;
+  return { p: JSON.parse(JSON.stringify(p)), evs: JSON.parse(JSON.stringify(state.events.filter(e=>e.personId===p.id))) };
+}
+function applySnapshot(s){
+  if(!s) return;
+  const p = personById(activePersonId); if(!p) return;
+  Object.assign(p, s.p);                 // 还原人物字段
+  // 还原该人的往来：先移除该人现有往来，再放回快照里的
+  state.events = state.events.filter(e=>e.personId!==p.id).concat(s.evs);
+}
+function doUndo(){
+  if(!undoStack.length) return;
+  redoStack.push(lastSnap); lastSnap = undoStack.pop();
+  applySnapshot(lastSnap); renderPanel(); updateUndoButtons();
+}
+function doRedo(){
+  if(!redoStack.length) return;
+  undoStack.push(lastSnap); lastSnap = redoStack.pop();
+  applySnapshot(lastSnap); renderPanel(); updateUndoButtons();
+}
+function updateUndoButtons(){
+  const u = document.getElementById('undoBtn'), r = document.getElementById('redoBtn');
+  if(u) u.disabled = !undoStack.length;
+  if(r) r.disabled = !redoStack.length;
+}
 function showToast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -1885,8 +1926,8 @@ function openPerson(id, isNew){
   activePersonId = id;
   editingEventId = null;
   draftEventPhotos = [];
-  panelDirty = false;
-  activeIsNew = !!isNew;
+  panelDirty = false; activeIsNew = !!isNew;
+  undoStack = []; redoStack = []; lastSnap = panelSnapshot(); _lastUndoKey = null;   // 进入面板时初始化撤回栈
   document.getElementById('overlay').classList.add('show');
   renderPanel();
   document.getElementById('overlay').onclick = (e)=>{ if(e.target.id==='overlay') closePanel(); };
@@ -1914,6 +1955,7 @@ async function finishClose(){
 function openPersonFromNet(id){
   document.getElementById('overlay').style.zIndex = '80';
   activePersonId = id; panelDirty = false;
+  undoStack = []; redoStack = []; lastSnap = panelSnapshot();   // 进入面板时初始化撤回栈
   document.getElementById('overlay').classList.add('show');
   renderPanel();
   document.getElementById('overlay').onclick = (e)=>{ if(e.target.id==='overlay') closePanel(); };
@@ -2061,6 +2103,10 @@ function renderPanel(){
 
     <div class="save-bar" id="saveBar" ${panelDirty?'':'style="display:none"'}>
       <span class="save-hint">有未保存的修改</span>
+      <div class="undo-redo">
+        <button class="mini-btn" id="undoBtn" disabled title="撤回">↶ 撤回</button>
+        <button class="mini-btn" id="redoBtn" disabled title="重做">↷ 重做</button>
+      </div>
       <div><button class="mini-cancel" id="discardBtn">放弃</button><button class="save-row-btn" id="confirmSaveBtn">确认保存</button></div>
     </div>
   `;
@@ -2113,11 +2159,13 @@ function renderPanel(){
   renderEvPhotos();
 
   const bindField = (id, key)=>{
-    document.getElementById(id).addEventListener('input', ()=>{
-      p[key] = document.getElementById(id).value.trim();
+    const el = document.getElementById(id);
+    el.addEventListener('input', ()=>{
+      p[key] = el.value.trim();
       if(key==='name') document.getElementById('pname-display').textContent = p.name || '新的一位';
-      markDirty();
+      // 实时改值但不压栈；提交快照在 change（失焦/回车）时，避免逐字符撤销
     });
+    el.addEventListener('change', ()=>{ p[key] = el.value.trim(); if(key==='name') document.getElementById('pname-display').textContent = p.name || '新的一位'; markDirty(); });
   };
   bindField('f-name','name'); bindField('f-birthday','birthday'); bindField('f-metdate','metDate'); bindField('f-metcontext','metContext'); bindField('f-notes','notes'); bindField('f-phone','phone'); bindField('f-workphone','workPhone'); bindField('f-company','company'); bindField('f-formercompany','formerCompany');
   document.getElementById('f-introby').addEventListener('change', ()=>{ p.introducedBy = document.getElementById('f-introby').value || null; markDirty(); });
@@ -2378,7 +2426,12 @@ function renderPanel(){
   const csBtn = document.getElementById('confirmSaveBtn');
   if(csBtn) csBtn.onclick = async ()=>{ await saveState(); panelDirty = false; const b=document.getElementById('saveBar'); if(b) b.style.display='none'; showToast('已保存到本地'); renderPanel(); };
   const dcBtn = document.getElementById('discardBtn');
-  if(dcBtn) dcBtn.onclick = async ()=>{ await loadState(); await finishClose(); };
+  if(dcBtn) dcBtn.onclick = async ()=>{ await loadState(); undoStack=[]; redoStack=[]; lastSnap=panelSnapshot(); _lastUndoKey=null; updateUndoButtons(); await finishClose(); };
+  // 撤回 / 重做
+  const uBtn = document.getElementById('undoBtn'), rBtn = document.getElementById('redoBtn');
+  if(uBtn) uBtn.onclick = ()=> doUndo();
+  if(rBtn) rBtn.onclick = ()=> doRedo();
+  updateUndoButtons();
 
   // @ 提及：在备注与往来内容里 @ 库内任何人 / #标签
   attachMention(document.getElementById('f-notes'), {tags:true});
