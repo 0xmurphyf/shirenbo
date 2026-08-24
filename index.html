@@ -902,7 +902,7 @@ function renderContent(text){
   state.people.forEach(p=>{
     if(!p.name) return;
     const esc = escapeHtml(p.name).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    const re = new RegExp('@'+esc, 'g');
+    const re = new RegExp('@'+esc+'(?=[\\s@#，。！？、；：,.!?]|$)', 'g');
     html = html.replace(re, ()=> stash(`<span class="mention" data-id="${p.id}">@${escapeHtml(p.name)}</span>`));
   });
   // 标签：#标签（新写法）；@标签（旧数据兼容，仅当没有同名的人时才当标签渲染）
@@ -911,7 +911,7 @@ function renderContent(text){
     const esc = escapeHtml(t).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     html = html.replace(new RegExp('#'+esc,'g'), ()=> stash(`<span class="mention mention-tag" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`));
     if(!state.people.some(pp=> pp.name && pp.name.trim()===t)){
-      html = html.replace(new RegExp('@'+esc,'g'), ()=> stash(`<span class="mention mention-tag" data-tag="${escapeHtml(t)}">@${escapeHtml(t)}</span>`));
+      html = html.replace(new RegExp('@'+esc+'(?=[\\s@#，。！？、；：,.!?]|$)','g'), ()=> stash(`<span class="mention mention-tag" data-tag="${escapeHtml(t)}">@${escapeHtml(t)}</span>`));
     }
   });
   return html.replace(/\u0000(\d+)\u0000/g, (_,i)=> phs[+i]);
@@ -2230,6 +2230,7 @@ function renderPanel(){
       addMentionConnections(p.id, content);  // 把 @ 的人加进「认识的人」
       showToast('记下了');
     }
+    pendingEventTypes = new Set(['见面']);   // 重置，下次新建往来默认「见面」（不残留上次选择）
     draftEventPhotos = [];
     markDirty(); renderPanel(); render();
   };
