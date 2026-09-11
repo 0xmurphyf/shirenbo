@@ -829,7 +829,41 @@ function doExport(){
   showToast('已导出加密备份（用当前应用锁密码还原）');
   // 醒目提示：备份密码 = 当前应用锁，遗忘则永久无法还原
   setTimeout(()=> showToast('⚠ 备份密码即当前应用锁密码，遗忘将无法还原，请记牢'), 1600);
-}
+  }
+
+function doExportCsv(){
+    if(!unlocked){ showToast('请先解锁后再导出'); return; }
+    if(!state.people.length){ showToast('没有人物数据可导出'); return; }
+
+    const rows = state.people.map(p=>{
+      return [
+        String(p.name || '').replace(/[",\n\r]/g,' '),
+        String(p.id || ''),
+        String(p.roles && p.roles.length ? p.roles.join('; ') : ''),
+        String(p.tags && p.tags.length ? p.tags.join('; ') : ''),
+        String(p.company || ''),
+        String(p.formerCompany || ''),
+        String(p.phone || ''),
+        String(p.workPhone || ''),
+        p.trust != null ? p.trust : '',
+        String(p.metDate || ''),
+        p.introducedBy != null && p.introducedBy !== '' ? String(p.introducedBy) : '',
+        String(p.notes || ''),
+        String(p.birthday || ''),
+        String(p.photo || ''),
+      ].map(v=> v == null ? '' : v).join(',');
+    });
+    const header = '姓名,id,roles,tags,公司,前公司,phone,工作电话,信任,认识时间,介绍人,备注,生日,头像\n';
+    const csv = '\ufeff' + header + rows.join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'shirenbo-people-' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    showToast('已导出 ' + state.people.length + ' 位人物（CSV）');
+  }
+  document.getElementById('exportCsvBtn').onclick = doExportCsv;
 
 async function loadState(){
   try{
@@ -2489,6 +2523,7 @@ function renderSettingsPanel(){
 
     <div class="section-label">数据</div>
     <button class="save-row-btn" id="exportBtn">导出备份（JSON）</button>
+    <button class="save-row-btn" id="exportCsvBtn" style="margin-top:8px;">导出表格（CSV）</button>
     <button class="save-row-btn" id="importBtn" style="margin-top:8px;">导入备份…</button>
     <input type="file" id="importFile" accept="application/json,.json" style="display:none;" />
     <div class="empty-hint" style="padding:6px 2px 10px; line-height:1.5;">备份用「当前应用锁密码」加密，跨设备还原需相同密码；<b>遗忘应用锁密码则备份永久无法打开</b>，请务必记牢 PIN。</div>
