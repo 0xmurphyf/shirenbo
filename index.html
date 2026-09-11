@@ -9,7 +9,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="人脉簿">
 <link rel="manifest" href="manifest.json">
-<!-- 字体：优先系统中文衬线/无衬线；离线也能用，不再依赖 Google Fonts CDN -->
+  <script src="csv.js" defer></script>
+  <script src="xlsx-0185.min.js" defer></script>
+  <script src="import-table-template.js" defer></script>
+  <!-- 字体：优先系统中文衬线/无衬线；离线也能用，不再依赖 Google Fonts CDN -->
 <style>
   :root{
     --shell:#141F1D; --shell-2:#1B2A27; --shell-3:#223330;
@@ -3099,6 +3102,9 @@ async function boot(){
 
 
 boot();
+  try{
+    window.__shirenboTableImport && window.__shirenboTableImport.init && window.__shirenboTableImport.init();
+  }catch(_){}
 </script>
 <script>
 // 注册 Service Worker（PWA 离线缓存 + 可「添加到主屏幕」）。失败不影响主功能。
