@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="人脉簿">
 <link rel="manifest" href="manifest.json">
+    <script src="helpers.js" defer></script>
+    <script src="csv.js" defer></script>
 <!-- 字体：优先系统中文衬线/无衬线；离线也能用，不再依赖 Google Fonts CDN -->
 <style>
   :root{
@@ -2489,6 +2491,8 @@ function renderSettingsPanel(){
     <button class="save-row-btn" id="importBtn" style="margin-top:8px;">导入备份…</button>
     <input type="file" id="importFile" accept="application/json,.json" style="display:none;" />
     <div class="empty-hint" style="padding:6px 2px 10px; line-height:1.5;">备份用「当前应用锁密码」加密，跨设备还原需相同密码；<b>遗忘应用锁密码则备份永久无法打开</b>，请务必记牢 PIN。</div>
+    <button class="save-row-btn" id="csvImportBtn" style="margin-top:6px;">导入表格 (CSV)…</button>
+    <input type="file" id="csvFile" accept=".csv,.tsv,.txt" style="display:none;" />
     <button class="danger-btn" id="clearAllBtn">清空所有数据</button>
 
     <div class="section-label">标签管理（统一命名，避免 香港 / HK 重复）</div>
@@ -2510,6 +2514,170 @@ function renderSettingsPanel(){
   };
 
   document.getElementById('exportBtn').onclick = ()=> doExport();
+
+  // CSV 表格导入：点击后呼出文件选择，解析后复用现有追加/替换逻辑
+  document.getElementById('csvImportBtn').onclick = ()=> document.getElementById('csvFile').click();
+  (function wireCsvImport(){
+    const csvInput = document.getElementById('csvFile');
+    if(!csvInput) return;
+    csvInput.onchange = async ()=>{
+      const file = csvInput.files && csvInput.files[0];
+      if(!file) return;
+      let parseResult;
+      try{
+        if(typeof Papa !== 'undefined' && Papa.parse){
+          parseResult = Papa.parse(file, { header: true, skipEmptyLines: true, dynamicTyping: false });
+        } else {
+          throw new Error('PapaParse 未加载');
+        }
+      }catch(e){
+        showToast('CSV 解析失败：' + (e && e.message ? e.message : String(e)));
+        csvInput.value = '';
+        return;
+      }
+      if(parseResult && parseResult.errors && parseResult.errors.length){
+        const top = parseResult.errors.slice(0, 3).map(e=>'[行 ' + e.row + '] ' + (e.message || e.error)).join('\n');
+        showToast('CSV 含有解析警告/错误（已取前 3 条）：\n' + top);
+      }
+      const rows = parseResult && Array.isArray(parseResult.data) ? parseResult.data : [];
+      if(!rows.length){
+        showToast('CSV 里面没有可导入的行');
+        csvInput.value = '';
+        return;
+      }
+      // 识别这是人物表还是事件表（首列别名判定）
+      const firstKeys = Object.keys(rows[0] || {}).map(k=>(k||'').trim().toLowerCase());
+      const isPerson = firstKeys.some(k=> k==='name' || k==='人物' || k==='姓名' || k==='人物名称');
+      const isEvent  = firstKeys.some(k=> k==='date' || k==='日期' || k==='content' || k==='内容' || k==='event' || k==='事件');
+      let incomingPeople = [];
+      let incomingEvents = [];
+      if(isPerson){
+        for(const r of rows){
+          const row = r || {};
+          const name = (row.name || row.人物 || row.姓名 || row.人物名称 || '').trim();
+          if(!name) continue;
+          const roles = splitCsvField(row.roles || row.角色 || '');
+          const tags  = splitCsvField(row.tags  || row.标签 || '');
+          const company = (row.company || row.公司 || '').trim();
+          const phone = (row.phone || row.电话 || '').trim();
+          const trustRaw = parseFloat(row.trust || row.信任度 || '') || 0;
+          const metDate = (row.metDate || row.见面日期 || row.日期 || row.创建时间 || '').trim();
+          const notes = (row.notes || row.备注 || row.备注内容 || row.内容 || '').trim();
+          incomingPeople.push({
+            name,
+            roles, tags,
+            company,
+            phone,
+            trust: trustRaw,
+            metDate,
+            notes,
+            introducedBy: '',
+            createdAt: new Date().toISOString()
+          });
+        }
+        showToast('已从 CSV 识别到 ' + incomingPeople.length + ' 位人物（跳过无姓名行）');
+      } else if(isEvent){
+        for(const r of rows){
+          const row = r || {};
+          const date = (row.date || row.日期 || row.发生日期 || '').trim();
+          if(!date) continue;
+          const personName = (row.person || row.人物 || row.联系人 || row.相关人 || row.谁 || '').trim();
+          const type = (row.type || row.事件类型 || row.类型 || '').trim();
+          const content = (row.content || row.内容 || row.备注 || row.描述 || '').trim();
+          if(!personName && !type && !content) continue;
+          incomingEvents.push({
+            date,
+            person: personName,
+            type: type || '见面',
+            content,
+            photos: [],
+            createdAt: new Date().toISOString()
+          });
+        }
+        showToast('已从 CSV 识别到 ' + incomingEvents.length + ' 条往来（跳过无日期行）');
+      } else {
+        // 无法判定是人物还是事件：优先按人物处理（有 name 就算人物），否则按事件
+        for(const r of rows){
+          const row = r || {};
+          const name = (row.name || row.人物 || row.姓名 || row.人物名称 || '').trim();
+          if(name){
+            const roles = splitCsvField(row.roles || row.角色 || '');
+            const tags  = splitCsvField(row.tags  || row.标签 || '');
+            const company = (row.company || row.公司 || '').trim();
+            const phone = (row.phone || row.电话 || '').trim();
+            const trustRaw = parseFloat(row.trust || row.信任度 || '') || 0;
+            const metDate = (row.metDate || row.见面日期 || row.日期 || row.创建时间 || '').trim();
+            const notes = (row.notes || row.备注 || row.备注内容 || row.内容 || '').trim();
+            incomingPeople.push({
+              name, roles, tags, company, phone,
+              trust: trustRaw, metDate, notes,
+              introducedBy: '', createdAt: new Date().toISOString()
+            });
+            continue;
+          }
+          const date = (row.date || row.日期 || row.发生日期 || '').trim();
+          if(!date) continue;
+          const personName = (row.person || row.人物 || row.联系人 || row.相关人 || row.谁 || '').trim();
+          const type = (row.type || row.事件类型 || row.类型 || '').trim();
+          const content = (row.content || row.内容 || row.备注 || row.描述 || '').trim();
+          incomingEvents.push({
+            date, person: personName,
+            type: type || '见面', content,
+            photos: [], createdAt: new Date().toISOString()
+          });
+        }
+        showToast('无法明确识别表格种类，按「有姓名→人物 / 有日期→事件」拆分处理（人物 ' + incomingPeople.length + ' / 事件 ' + incomingEvents.length + '）');
+      }
+      csvInput.value = '';
+      if(!incomingPeople.length && !incomingEvents.length){
+        showToast('没有可导入的有效数据行（已跳过空行/无姓名或无日期行）');
+        return;
+      }
+      // 复用 JSON 导入已有的「替换 or 追加去重」分支，组装成与 loadState 能消费的中间格式
+      const incomingState = {
+        people: incomingPeople,
+        events: incomingEvents,
+        connections: []
+      };
+      try{
+        const replaceAll = (state.people.length === 0);
+        let actuallyReplaceAll;
+        if(state.people.length > 0){
+          actuallyReplaceAll = await new Promise(res=>{
+            showConfirm('导入表格 (CSV) — 处理方式',
+              '当前已有数据。\n\n• 确定 = 替换全部（导入表格覆盖现有数据，不可撤销）\n• 取消 = 追加（自动按姓名去重合并）',
+              ()=>res(true));
+            const cancelBtn = document.getElementById('confirmCancel');
+            if(cancelBtn) cancelBtn.onclick = ()=>{ document.getElementById('confirmOverlay').classList.remove('show'); res(false); };
+          });
+        } else {
+          actuallyReplaceAll = true;
+        }
+        if(actuallyReplaceAll){
+          state.people   = incomingState.people;
+          state.events   = incomingState.events;
+          state.connections = [];
+          showToast('已替换为表格导入数据（人物 ' + incomingPeople.length + ' / 事件 ' + incomingEvents.length + '）');
+        } else {
+          const norm = s=>(s||'').trim().toLowerCase();
+          const haveNames = new Set(state.people.map(p=>norm(p.name)));
+          const newPeople = incomingState.people.filter(p=> !haveNames.has(norm(p.name)));
+          const haveEventIds = new Set(state.events.map(e=>e.id).filter(Boolean));
+          const newEvents = (incomingState.events||[]).filter(e=> e.id && !haveEventIds.has(e.id));
+          const skippedP = incomingState.people.length - newPeople.length;
+          const skippedE = (incomingState.events||[]).length - newEvents.length;
+          state.people = state.people.concat(newPeople);
+          state.events = state.events.concat(newEvents);
+          showToast('已追加（跳过 ' + skippedP + ' 个重名人物、' + skippedE + ' 条重复往来）');
+        }
+        await saveState();
+        render();
+        document.getElementById('settingsOverlay').classList.remove('show');
+      }catch(e){
+        showToast('表格导入处理失败：' + (e && e.message ? e.message : String(e)));
+      }
+    };
+  })();
 
 
   const fileInput = document.getElementById('importFile');
