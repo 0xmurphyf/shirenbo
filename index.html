@@ -2580,11 +2580,20 @@ function renderSettingsPanel(){
             name,
             roles, tags,
             company,
+            formerCompany: (row.formerCompany || row.前公司 || '').trim(),
             phone,
+            workPhone: (row.workPhone || row.工作电话 || '').trim(),
             trust: trustRaw,
             metDate,
+            birthday: (row.birthday || row.生日 || '').trim(),
+            metContext: (row.metContext || row.认识方式 || row.怎么认识 || '').trim(),
             notes,
             introducedBy: '',
+            contacts: [],
+            socials: [],
+            nextContact: '',
+            photo: null,
+            aiSummary: null,
             createdAt: new Date().toISOString()
           });
         }
