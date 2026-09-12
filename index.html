@@ -2514,7 +2514,8 @@ function renderSettingsPanel(){
   };
 
   document.getElementById('exportBtn').onclick = ()=> doExport();
-
+  let csvPersonNameToId = new Map();
+  function csvPersonNameToIdLookup(name) { return csvPersonNameToId.get((name||'').trim()) || null; }
   // CSV 表格导入：点击后呼出文件选择，解析后复用现有追加/替换逻辑
   document.getElementById('csvImportBtn').onclick = ()=> document.getElementById('csvFile').click();
   (function wireCsvImport(){
@@ -2560,6 +2561,7 @@ function renderSettingsPanel(){
       let incomingPeople = [];
       let incomingEvents = [];
       if(isPerson){
+        const nameToId = new Map();
         for(const r of rows){
           const row = r || {};
           const name = (row.name || row.人物 || row.姓名 || row.人物名称 || '').trim();
@@ -2571,7 +2573,10 @@ function renderSettingsPanel(){
           const trustRaw = parseFloat(row.trust || row.信任度 || '') || 0;
           const metDate = (row.metDate || row.见面日期 || row.日期 || row.创建时间 || '').trim();
           const notes = (row.notes || row.备注 || row.备注内容 || row.内容 || '').trim();
+          const pid = uid();
+          nameToId.set(name, pid);
           incomingPeople.push({
+            id: pid,
             name,
             roles, tags,
             company,
@@ -2584,6 +2589,8 @@ function renderSettingsPanel(){
           });
         }
         showToast('已从 CSV 识别到 ' + incomingPeople.length + ' 位人物（跳过无姓名行）');
+        // store map for event linking
+        csvPersonNameToId = nameToId;
       } else if(isEvent){
         for(const r of rows){
           const row = r || {};
@@ -2593,9 +2600,12 @@ function renderSettingsPanel(){
           const type = (row.type || row.事件类型 || row.类型 || '').trim();
           const content = (row.content || row.内容 || row.备注 || row.描述 || '').trim();
           if(!personName && !type && !content) continue;
+          const personId = csvPersonNameToIdLookup(personName) || (state.people.find(p=>(p.name||'').trim()===personName)||{}).id || null;
           incomingEvents.push({
+            id: uid(),
             date,
-            person: personName,
+            personId,
+            personName,
             type: type || '见面',
             content,
             photos: [],
@@ -2605,6 +2615,7 @@ function renderSettingsPanel(){
         showToast('已从 CSV 识别到 ' + incomingEvents.length + ' 条往来（跳过无日期行）');
       } else {
         // 无法判定是人物还是事件：优先按人物处理（有 name 就算人物），否则按事件
+        const fallbackNameToId = new Map();
         for(const r of rows){
           const row = r || {};
           const name = (row.name || row.人物 || row.姓名 || row.人物名称 || '').trim();
@@ -2616,7 +2627,10 @@ function renderSettingsPanel(){
             const trustRaw = parseFloat(row.trust || row.信任度 || '') || 0;
             const metDate = (row.metDate || row.见面日期 || row.日期 || row.创建时间 || '').trim();
             const notes = (row.notes || row.备注 || row.备注内容 || row.内容 || '').trim();
+            const pid = uid();
+            fallbackNameToId.set(name, pid);
             incomingPeople.push({
+              id: pid,
               name, roles, tags, company, phone,
               trust: trustRaw, metDate, notes,
               introducedBy: '', createdAt: new Date().toISOString()
@@ -2628,12 +2642,15 @@ function renderSettingsPanel(){
           const personName = (row.person || row.人物 || row.联系人 || row.相关人 || row.谁 || '').trim();
           const type = (row.type || row.事件类型 || row.类型 || '').trim();
           const content = (row.content || row.内容 || row.备注 || row.描述 || '').trim();
+          const personId = (fallbackNameToId.get(personName)) || (state.people.find(p=>(p.name||'').trim()===personName)||{}).id || null;
           incomingEvents.push({
-            date, person: personName,
+            id: uid(),
+            date, personId, personName,
             type: type || '见面', content,
             photos: [], createdAt: new Date().toISOString()
           });
         }
+        csvPersonNameToId = fallbackNameToId;
         showToast('无法明确识别表格种类，按「有姓名→人物 / 有日期→事件」拆分处理（人物 ' + incomingPeople.length + ' / 事件 ' + incomingEvents.length + '）');
       }
       csvInput.value = '';
