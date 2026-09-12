@@ -2526,7 +2526,15 @@ function renderSettingsPanel(){
       let parseResult;
       try{
         if(typeof Papa !== 'undefined' && Papa.parse){
-          parseResult = Papa.parse(file, { header: true, skipEmptyLines: true, dynamicTyping: false });
+          parseResult = await new Promise((resolve, reject)=>{
+            Papa.parse(file, {
+              header: true,
+              skipEmptyLines: true,
+              dynamicTyping: false,
+              complete: (results) => resolve(results),
+              error: (err) => reject(err)
+            });
+          });
         } else {
           throw new Error('PapaParse 未加载');
         }
